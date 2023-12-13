@@ -1,4 +1,4 @@
-import os, time, requests, re, json, toml
+import os, time, requests, re, json, toml, multiprocessing
 import http.cookiejar, requests.utils
 
 from Crypto.Cipher import PKCS1_OAEP
@@ -6,12 +6,12 @@ from Crypto.PublicKey import RSA
 from Crypto.Hash import SHA256
 import binascii
 
-from urllib.parse import unquote
+from urllib.parse import unquote, quote
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 # classes
-## 网络请求处理
 class RequestHandler(BaseHTTPRequestHandler):
+    '网络请求服务器'
     def _writeheaders(self):
         print(self.path)
         print(self.headers)
@@ -34,7 +34,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         data = self.rfile.read(int(self.headers['content-length']))
         data = unquote(str(data, encoding='utf-8'))
         json_obj = json.loads(data)
-        event_type = json_obj[type]
+        event_type = json_obj['type']
 
         # 根据接收到的blrec参数执行相应操作
         try:
@@ -43,6 +43,8 @@ class RequestHandler(BaseHTTPRequestHandler):
                 refresh_cookies()
             elif event_type == 'VideoPostprocessingCompletedEvent':
                 # 视频后处理完成，上传到alist
+                filename = json_obj['data']['path']
+                upload_video(filename=filename)
         except Exception as e:
             print(e)
         
@@ -52,7 +54,73 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(str(self.headers))
 
+class AutoRecSession(requests.Session):
+    '本地http通信专用类'
+    def get_alist_token(self):
+        '获取alist管理token'
+        url = "http://localhost:{}{}".format(port_alist, '/api/auth/login/hash')
+        params = {
+            "username": username,
+            "password": password
+        }
+        headers = {
+            'Content-Type': 'application/json'
+        }
+
+        # 请求API
+        data = dict2str(params)
+        response = self.post(url, data=data, headers=headers)
+        data = response.json()['data']
+        
+        return data['token']
+    
+    def upload_alist(self, token:str, filename: str):
+        '上传文件'
+        # 文件名处理
+        filename_split = os.path.split(filename)
+        target_filename = filename_split[1] # 目标文件名
+        target_dir = os.path.split(filename_split[0])[1] # 目标文件夹
+        filepath = "/quark/{}/{}".format(target_dir, target_filename)
+        filepath = quote(filepath) # URL编码
+
+        # 请求参数
+        url = "http://localhost:{}{}".format(port_alist, '/api/fs/put')
+        headers = {
+            "Authorization": token,
+            "File-Path": filepath,
+            "As-Task": "True",
+            "Content-Type": "application/octet-stream",
+            "Content-Length": ""
+        }
+        data = {
+            "body": "file:/{}".format(filename)
+        }
+
+        # 请求API
+        response = self.put(url=url, data=dict2str(data), headers=headers)
+        data = response.json()
+
+        # 上传完成后删除文件
+        if data['code'] == 200:
+            print("Upload success.")
+            os.remove(filename)
+        else:
+            print("Upload failed,", data['message'])
+    
+    def set_blrec(self, data: dict):
+        '更改blrec设置'
+        url = "http://localhost:{}{}".format(port_blrec, '/api/v1/settings')
+        body = dict2str(data)
+
+        # 请求API
+        self.patch(url, data=body)
+
 # functions
+## 奇奇怪怪的功能
+def dict2str(data: dict):
+    '将dict转换为符合http要求的字符串'
+    s = str(data)
+    return s.replace('\'', '\"')
 
 ## 刷新cookies
 def getCorrespondPath(ts):
@@ -69,7 +137,7 @@ def getCorrespondPath(ts):
     encrypted = cipher.encrypt(f'refresh_{ts}'.encode())
     return binascii.b2a_hex(encrypted).decode()
 
-def dict2str(data:dict):
+def cookie_dict2str(data:dict):
     'cookie_dict转换为字符串'
     s = ''
     for i in data.keys():
@@ -86,7 +154,7 @@ def refresh_cookies():
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36 Edg/121.0.0.0'
         }
-    session = requests.session()
+    session = AutoRecSession()
     session.cookies = http.cookiejar.LWPCookieJar()
     session.cookies.load(filename='cookies.txt', ignore_discard=True, ignore_expires=True)
     cookies_dict = requests.utils.dict_from_cookiejar(session.cookies)
@@ -147,31 +215,40 @@ def refresh_cookies():
 
     # 保存cookies
     session.cookies.save(filename='cookies.txt')
-    new_cookies = dict2str(cookies_dict)
+    new_cookies = cookie_dict2str(cookies_dict)[:-1] # 去除最后的分号
 
-    # 读取blrec设置
-    settings_path = os.path.join(settings_dir, "settings.toml")
-    with open(settings_path, 'r', encoding='utf-8') as f:
-        settings_toml = toml.load(f)
+    # 更新blrec的cookies
+    new_data = {"header": {"cookie": new_cookies}}
+    session.set_blrec(new_data)
 
-    # 更新blrec设置
-    settings_toml['header']['cookie'] = new_cookies[:-1]
-    with open(settings_path, 'w', encoding='utf-8') as f:
-        toml.dump(settings_toml, f)
+def upload_video(filename: str):
+    '上传视频'
+    # session
+    session = AutoRecSession()
 
-## 上传视频
+    # 获取token
+    token = session.get_alist_token()
 
-def get_token()
+    # 上传文件
+    pool = multiprocessing.Pool()
+    pool.apply_async(session.upload_alist, args=[token, filename])
+    pool.close()
+
+# 加载toml
+with open("settings.toml", 'r', encoding='utf-8') as f:
+    settings = toml.load(f)
 
 # const
 ## blrec
-port_blrec = 2356
-settings_dir = '/root/.blrec'
+settings_blrec = settings['blrec']
+port_blrec = settings_blrec['port_blrec']
+settings_dir = settings_blrec['settings_dir']
 
 ## alist
-port_alist = 5244
-username = 'admin'
-password = ''
+settings_alist = settings['alist']
+port_alist = settings_alist['port_alist']
+username = settings_alist['username']
+password = settings_alist['password']
 
 # main
 if __name__ == "__main__":
