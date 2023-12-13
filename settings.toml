@@ -1,0 +1,8 @@
+[blrec]
+port_blrec = 2356
+settings_dir = '/root/.blrec'
+
+[alist]
+port_alist = 5244
+username = 'admin'
+password = ''
