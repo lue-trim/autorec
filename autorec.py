@@ -1,5 +1,5 @@
 import os, time, requests, re, json, toml, multiprocessing
-import http.cookiejar, requests.utils
+import http.cookiejar, requests.utils, requests_
 
 from Crypto.Cipher import PKCS1_OAEP
 from Crypto.PublicKey import RSA
@@ -95,6 +95,7 @@ class AutoRecSession(requests.Session):
         data = {
             "body": "file:/{}".format(filename)
         }
+        open()
 
         # 请求API
         response = self.put(url=url, data=dict2str(data), headers=headers)
