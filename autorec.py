@@ -13,31 +13,15 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 # classes
 class RequestHandler(BaseHTTPRequestHandler):
     '网络请求服务器'
-    def _writeheaders(self):
-        print(self.path)
-        print(self.headers)
-
-    def do_Head(self):
-        self._writeheaders()
-
-    def do_GET(self):
-        self._writeheaders()
-        self.wfile.write(str(self.headers))
-
-        # 回复
-        self.send_response(200)
-        self.send_header('Content-Type', 'application/json')
-        self.end_headers()
-        self.wfile.write(str(self.headers))
-
     def do_POST(self):
+        '接收到POST信息时'
         # 读取参数
         data = self.rfile.read(int(self.headers['content-length']))
         data = unquote(str(data, encoding='utf-8'))
         json_obj = json.loads(data)
         event_type = json_obj['type']
 
-        # 根据接收到的blrec参数执行相应操作
+        # 根据接收到的blrec webhook参数执行相应操作
         try:
             if event_type == 'RecordingFinishedEvent':
                 # 录制完成，更新cookies
@@ -47,7 +31,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 filename = json_obj['data']['path']
                 upload_video(filename)
             else:
-                print("Got new POST: ", event_type)
+                print("Got new Event: ", event_type)
         except Exception as e:
             print(e)
         
@@ -55,7 +39,11 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header('Content-Type', 'application/json')
         self.end_headers()
-        self.wfile.write(str(self.headers))
+        data = {
+            "code": 200,
+            "message": "Mua!"
+        }
+        self.wfile.write(data)
 
 class File:
     '表单上传用文件类'
@@ -318,9 +306,10 @@ def refresh_cookies():
 def upload_video(video_filename: str):
     '上传视频'
     # 文件名处理
-    appendices = ['flv', 'jsonl', 'xml', 'jpg']
+    appendices = ['flv', 'jsonl', 'xml', 'jpg', 'mp4'] # 可能存在的后缀名
     filenames = []
     for appendix in appendices:
+        # 以下两块自己处理
         filename_split = os.path.split(video_filename)
         target_filename = filename_split[1] # 目标文件名
         target_dir = os.path.split(filename_split[0])[1] # 目标文件夹(日期)
@@ -329,7 +318,8 @@ def upload_video(video_filename: str):
         dist_filename = "/quark/{}/{}{}".format(target_dir, target_filename[:-3], appendix) # 给文件加上不同的后缀名
 
         # [本地文件名, 远程文件名]
-        filenames.append([local_filename, dist_filename])
+        if os.path.exists(local_filename):
+            filenames.append([local_filename, dist_filename])
     
     # session
     session = AutoRecSession()
@@ -342,7 +332,7 @@ def upload_video(video_filename: str):
     for i in filenames:
         local_filename = i[0]
         dist_filename = i[1]
-        pool.apply_async(session.upload_alist, args=[token, local_filename, dist_filename, False])
+        pool.apply_async(session.upload_alist, args=[token, local_filename, dist_filename, True])
     pool.close()
 
 # 加载toml
@@ -362,11 +352,16 @@ port_alist = settings_alist['port_alist']
 username = settings_alist['username']
 password = settings_alist['password']
 
+## server
+settings_server = settings['server']
+host_server = settings_server['host_server']
+port_server = settings_server['port_server']
+
 # main
 if __name__ == "__main__":
     # const
     # 监听
-    addr = ('localhost', 23561)
+    addr = (host_server, port_server)
     print("service started")
     server = HTTPServer(addr, RequestHandler)
     server.serve_forever()
