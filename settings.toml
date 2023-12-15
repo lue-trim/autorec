@@ -1,8 +1,10 @@
 [blrec]
+host_blrec = 'localhost'
 port_blrec = 2356
 settings_dir = '/root/.blrec'
 
 [alist]
 port_alist = 5244
+host_alist = 'localhost'
 username = 'admin'
 password = 'AF4A9DBA9C1A74FB34F1585A10B0A414F9693DF93BC52A218BE2EEB57309C43B'

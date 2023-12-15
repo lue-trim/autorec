@@ -45,7 +45,9 @@ class RequestHandler(BaseHTTPRequestHandler):
             elif event_type == 'VideoPostprocessingCompletedEvent':
                 # 视频后处理完成，上传到alist
                 filename = json_obj['data']['path']
-                upload_video(filename=filename)
+                upload_video(filename)
+            else:
+                print("Got new POST: ", event_type)
         except Exception as e:
             print(e)
         
@@ -364,6 +366,7 @@ password = settings_alist['password']
 if __name__ == "__main__":
     # const
     # 监听
-    addr = ('', 23560)
+    addr = ('localhost', 23561)
+    print("service started")
     server = HTTPServer(addr, RequestHandler)
     server.serve_forever()
