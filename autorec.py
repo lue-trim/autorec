@@ -51,13 +51,23 @@ class File:
         self.filename = filename
         self.fp = fp
 
+    def get_size(self):
+        '获取文件大小'
+        return os.path.getsize(self.filename)
+
     def read(self, size=-1):
         'read方法，给requests调用'
         #with open(self.filename, 'rb') as file:
-        return self.fp.read(10000)
+        chunk_size = 10000
+        if self.get_size() <= chunk_size:
+            # 小文件直接上传
+            return self.fp.read(self.get_size())
+        else:
+            # 大文件分片上传
+            return self.fp.read(chunk_size)
 
     def __len__(self):
-        return os.path.getsize(self.filename)
+        return self.get_size()
 
 class AutoRecSession(requests.Session):
     '本地http通信专用类'
@@ -129,9 +139,9 @@ class AutoRecSession(requests.Session):
 
         # 获取结果
         if data['code'] == 200:
-            print("Remove success.")
+            print("Remove success:", dirname, filenames)
         else:
-            print("Remove failed,", data['message'])
+            print("Remove failed:", dirname, filenames, data['message'])
         
         return data['code']
         
@@ -157,12 +167,12 @@ class AutoRecSession(requests.Session):
         response_json = response.json()
         
         if response_json['code'] == 200:
-            print("Upload success.")
+            print("Upload success:", filename)
             # 是否在上传后删除文件
             if remove_after_upload:
                 os.remove(filename)
         else:
-            print("Upload failed,", response['message'])
+            print("Upload failed :", filename, response['message'])
 
     def upload_alist_form(self, token:str, filename: str):
         '表单上传文件（已废弃）'
