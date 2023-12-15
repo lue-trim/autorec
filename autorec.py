@@ -369,9 +369,12 @@ port_server = settings_server['port_server']
 
 # main
 if __name__ == "__main__":
-    # const
+    # 输出PID，方便结束进程
+    with open("pid", 'w') as f:
+        f.write(os.getpid())
+    print("service started: ", os.getpid())
+
     # 监听
     addr = (host_server, port_server)
-    print("service started")
     server = HTTPServer(addr, RequestHandler)
     server.serve_forever()
