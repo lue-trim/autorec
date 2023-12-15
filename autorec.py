@@ -1,5 +1,6 @@
 import os, time, requests, re, json, toml, multiprocessing
-import http.cookiejar, requests.utils, requests_
+import http.cookiejar, requests.utils
+import urllib3
 
 from Crypto.Cipher import PKCS1_OAEP
 from Crypto.PublicKey import RSA
@@ -54,14 +55,28 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(str(self.headers))
 
+class File:
+    '表单上传用文件类'
+    def __init__(self, fp, filename):
+        self.filename = filename
+        self.fp = fp
+
+    def read(self, size=-1):
+        'read方法，给requests调用'
+        #with open(self.filename, 'rb') as file:
+        return self.fp.read(10000)
+
+    def __len__(self):
+        return os.path.getsize(self.filename)
+
 class AutoRecSession(requests.Session):
     '本地http通信专用类'
     def get_alist_token(self):
         '获取alist管理token'
-        url = "http://localhost:{}{}".format(port_alist, '/api/auth/login/hash')
+        url = "http://{}:{}{}".format(host_alist, port_alist, '/api/auth/login/hash')
         params = {
             "username": username,
-            "password": password
+            "password": password.lower()
         }
         headers = {
             'Content-Type': 'application/json'
@@ -70,12 +85,97 @@ class AutoRecSession(requests.Session):
         # 请求API
         data = dict2str(params)
         response = self.post(url, data=data, headers=headers)
-        data = response.json()['data']
-        
-        return data['token']
+        response_json = response.json()
+        # 获取结果
+        if response_json['code'] == 200:
+            print("Get token success.")
+            return response_json['data']['token']
+        else:
+            print("Get token failed,", response_json['message'])
+            return ""
     
-    def upload_alist(self, token:str, filename: str):
-        '上传文件'
+    def copy_alist(self, token:str, source_dir:str, filenames:list, dist_dir:str):
+        '复制文件'
+        # 请求参数
+        url = "http://{}:{}{}".format(host_alist, port_alist, '/api/fs/copy')
+        headers = {
+            "Authorization": token,
+            "Content-Type": "application/json"
+        }
+        data = {
+            "src_dir": source_dir,
+            "dst_dir": dist_dir,
+            "names": filenames
+        }
+
+        # 请求API
+        response = self.post(url=url, data=dict2str(data), headers=headers)
+        data = response.json()
+
+        # 获取结果
+        if data['code'] == 200:
+            print("Copy success.")
+        else:
+            print("Copy failed,", data['message'])
+        
+        return data['code']
+    
+    def rm_alist(self, token:str, dirname:str, filenames:list):
+        '删除文件'
+        # 请求参数
+        url = "http://{}:{}{}".format(host_alist, port_alist, '/api/fs/remove')
+        headers = {
+            "Authorization": token,
+            "Content-Type": "application/json"
+        }
+        data = {
+            "dir": dirname,
+            "names": filenames
+        }
+
+        # 请求API
+        response = self.post(url=url, data=dict2str(data), headers=headers)
+        data = response.json()
+
+        # 获取结果
+        if data['code'] == 200:
+            print("Remove success.")
+        else:
+            print("Remove failed,", data['message'])
+        
+        return data['code']
+        
+    def upload_alist(self, token:str, filename:str, dist_filename:str, remove_after_upload=False):
+        '流式上传文件'
+        dist_filename = quote(dist_filename) # URL编码
+
+        # 请求参数
+        url = "http://{}:{}{}".format(host_alist, port_alist, '/api/fs/put')
+        headers = {
+            "Authorization": token,
+            "File-Path": dist_filename,
+            "As-Task": "True",
+            "Content-Type": "application/octet-stream",
+            "Content-Length": ""
+        }
+
+        # 打开文件
+        with open(filename, 'rb') as f:
+            data = File(f, filename)
+            # 请求API
+            response = requests.put(url=url, data=data, headers=headers)
+        response_json = response.json()
+        
+        if response_json['code'] == 200:
+            print("Upload success.")
+            # 是否在上传后删除文件
+            if remove_after_upload:
+                os.remove(filename)
+        else:
+            print("Upload failed,", response['message'])
+
+    def upload_alist_form(self, token:str, filename: str):
+        '表单上传文件（已废弃）'
         # 文件名处理
         filename_split = os.path.split(filename)
         target_filename = filename_split[1] # 目标文件名
@@ -84,33 +184,24 @@ class AutoRecSession(requests.Session):
         filepath = quote(filepath) # URL编码
 
         # 请求参数
-        url = "http://localhost:{}{}".format(port_alist, '/api/fs/put')
+        #token = self.get_alist_token()
+        url = "http://{}:{}{}".format(host_alist, port_alist, '/api/fs/form')
         headers = {
             "Authorization": token,
             "File-Path": filepath,
             "As-Task": "True",
-            "Content-Type": "application/octet-stream",
-            "Content-Length": ""
+            "Content-Type": "multipart/form-data",
+            "Content-Length": str(os.path.getsize(filename))
         }
-        data = {
-            "body": "file:/{}".format(filename)
-        }
-        open()
-
+        data = File(filename)
+        data = urllib3.encode_multipart_formdata()
         # 请求API
-        response = self.put(url=url, data=dict2str(data), headers=headers)
-        data = response.json()
+        res2 = requests.put(url=url, data=data, headers=headers).json()
+        print(res2)
 
-        # 上传完成后删除文件
-        if data['code'] == 200:
-            print("Upload success.")
-            os.remove(filename)
-        else:
-            print("Upload failed,", data['message'])
-    
     def set_blrec(self, data: dict):
         '更改blrec设置'
-        url = "http://localhost:{}{}".format(port_blrec, '/api/v1/settings')
+        url = "http://{}:{}{}".format(host_blrec, port_blrec, '/api/v1/settings')
         body = dict2str(data)
 
         # 请求API
@@ -222,8 +313,22 @@ def refresh_cookies():
     new_data = {"header": {"cookie": new_cookies}}
     session.set_blrec(new_data)
 
-def upload_video(filename: str):
+def upload_video(video_filename: str):
     '上传视频'
+    # 文件名处理
+    appendices = ['flv', 'jsonl', 'xml', 'jpg']
+    filenames = []
+    for appendix in appendices:
+        filename_split = os.path.split(video_filename)
+        target_filename = filename_split[1] # 目标文件名
+        target_dir = os.path.split(filename_split[0])[1] # 目标文件夹(日期)
+
+        local_filename = "{}{}".format(video_filename[:-3], appendix)
+        dist_filename = "/quark/{}/{}{}".format(target_dir, target_filename[:-3], appendix) # 给文件加上不同的后缀名
+
+        # [本地文件名, 远程文件名]
+        filenames.append([local_filename, dist_filename])
+    
     # session
     session = AutoRecSession()
 
@@ -232,7 +337,10 @@ def upload_video(filename: str):
 
     # 上传文件
     pool = multiprocessing.Pool()
-    pool.apply_async(session.upload_alist, args=[token, filename])
+    for i in filenames:
+        local_filename = i[0]
+        dist_filename = i[1]
+        pool.apply_async(session.upload_alist, args=[token, local_filename, dist_filename, False])
     pool.close()
 
 # 加载toml
@@ -242,11 +350,12 @@ with open("settings.toml", 'r', encoding='utf-8') as f:
 # const
 ## blrec
 settings_blrec = settings['blrec']
+host_blrec = settings_blrec['host_blrec']
 port_blrec = settings_blrec['port_blrec']
-settings_dir = settings_blrec['settings_dir']
 
 ## alist
 settings_alist = settings['alist']
+host_alist = settings_alist['host_alist']
 port_alist = settings_alist['port_alist']
 username = settings_alist['username']
 password = settings_alist['password']
