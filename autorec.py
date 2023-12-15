@@ -370,9 +370,10 @@ port_server = settings_server['port_server']
 # main
 if __name__ == "__main__":
     # 输出PID，方便结束进程
+    pid = os.getpid()
     with open("pid", 'w') as f:
-        f.write(os.getpid())
-    print("service started: ", os.getpid())
+        f.write(str(pid))
+    print("service started: ", pid)
 
     # 监听
     addr = (host_server, port_server)
