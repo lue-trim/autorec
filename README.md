@@ -3,8 +3,9 @@
 理论上稍微改改，也能用在命令行版录播姬上
 
 # 基于项目
-[acgnhiki / blrec](https://github.com/acgnhiki/blrec)；
-[SocialSisterYi / bilibili-API-collect](https://github.com/SocialSisterYi/bilibili-API-collect)
+- [acgnhiki / blrec](https://github.com/acgnhiki/blrec)；
+- [SocialSisterYi / bilibili-API-collect](https://github.com/SocialSisterYi/bilibili-API-collect)；
+- [alist-org / docs](https://github.com/alist-org/docs)
 
 # 使用方法
 ## conda环境
