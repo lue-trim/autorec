@@ -43,7 +43,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             "code": 200,
             "message": "Mua!"
         }
-        self.wfile.write(data)
+        self.wfile.write(str(data).encode())
 
 class File:
     '表单上传用文件类'
@@ -296,9 +296,9 @@ def refresh_cookies():
         )
     code = response.json()['code']
     if code == 0:
-        print("更新成功")
+        print("Cookies update success.")
     else:
-        print(response.json()['message'])
+        print("Cookies update failed:", response.json()['message'])
         return
 
     # 保存登录信息
