@@ -218,12 +218,12 @@ def dict2str(data: dict):
 def getCorrespondPath(ts):
     '获取刷新地址'
     key = RSA.importKey('''\
-    -----BEGIN PUBLIC KEY-----
-    MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDLgd2OAkcGVtoE3ThUREbio0Eg
-    Uc/prcajMKXvkCKFCWhJYJcLkcM2DKKcSeFpD/j6Boy538YXnR6VhcuUJOhH2x71
-    nzPjfdTcqMz7djHum0qSZA0AyCBDABUqCrfNgCiJ00Ra7GmRj+YCK1NJEuewlb40
-    JNrRuoEUXpabUzGB8QIDAQAB
-    -----END PUBLIC KEY-----''')
+-----BEGIN PUBLIC KEY-----
+MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDLgd2OAkcGVtoE3ThUREbio0Eg
+Uc/prcajMKXvkCKFCWhJYJcLkcM2DKKcSeFpD/j6Boy538YXnR6VhcuUJOhH2x71
+nzPjfdTcqMz7djHum0qSZA0AyCBDABUqCrfNgCiJ00Ra7GmRj+YCK1NJEuewlb40
+JNrRuoEUXpabUzGB8QIDAQAB
+-----END PUBLIC KEY-----''')
 
     cipher = PKCS1_OAEP.new(key, SHA256)
     encrypted = cipher.encrypt(f'refresh_{ts}'.encode())
