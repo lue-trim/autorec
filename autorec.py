@@ -1,4 +1,4 @@
-import os, time, requests, re, json, toml, multiprocessing
+import os, time, requests, re, json, toml, multiprocessing, traceback
 import http.cookiejar, requests.utils
 import urllib3
 
@@ -22,18 +22,16 @@ class RequestHandler(BaseHTTPRequestHandler):
         event_type = json_obj['type']
 
         # 根据接收到的blrec webhook参数执行相应操作
-        try:
-            if event_type == 'RecordingFinishedEvent':
-                # 录制完成，更新cookies
-                refresh_cookies()
-            elif event_type == 'VideoPostprocessingCompletedEvent':
-                # 视频后处理完成，上传到alist
-                filename = json_obj['data']['path']
-                upload_video(filename)
-            else:
-                print("Got new Event: ", event_type)
-        except Exception as e:
-            print(e)
+        # 更新：不用套try语句，要是出错http模块会自己处理
+        if event_type == 'RecordingFinishedEvent':
+            # 录制完成，更新cookies
+            refresh_cookies()
+        elif event_type == 'VideoPostprocessingCompletedEvent':
+            # 视频后处理完成，上传到alist
+            filename = json_obj['data']['path']
+            upload_video(filename)
+        else:
+            print("Got new Event: ", event_type)
         
         # 回复
         self.send_response(200)
@@ -47,6 +45,7 @@ class RequestHandler(BaseHTTPRequestHandler):
 
 class File:
     '表单上传用文件类'
+    # 注：with open()语句一定要写在class外面，否则对文件操作符开关过于频繁容易导致报错
     def __init__(self, fp, filename):
         self.filename = filename
         self.fp = fp
@@ -56,17 +55,18 @@ class File:
         return os.path.getsize(self.filename)
 
     def read(self, size=-1):
-        'read方法，给requests调用'
+        'read方法，给http模块调用，让其对文件自动分片'
         #with open(self.filename, 'rb') as file:
-        chunk_size = 10000
-        if self.get_size() <= chunk_size:
+        #chunk_size = 10000
+        #if self.get_size() <= chunk_size:
             # 小文件直接上传
-            return self.fp.read(self.get_size())
-        else:
+            #return self.fp.read(self.get_size())
+        #else:
             # 大文件分片上传
-            return self.fp.read(chunk_size)
+        return self.fp.read(size)
 
     def __len__(self):
+        '获取文件大小，给http模块调用'
         return self.get_size()
 
 class AutoRecSession(requests.Session):
@@ -144,7 +144,18 @@ class AutoRecSession(requests.Session):
             print("Remove failed:", dirname, filenames, data['message'])
         
         return data['code']
-        
+
+    def upload_alist_action(self, token:str, local_filename:str, dist_filename:str):
+        '多进程使用的流式上传文件，失败后自动重试3次以防网络问题'
+        for _ in range(3):
+            try:
+                self.upload_alist(token, local_filename, dist_filename, True)
+            except:
+                traceback.print_exc()
+                continue
+            else:
+                break
+
     def upload_alist(self, token:str, filename:str, dist_filename:str, remove_after_upload=False):
         '流式上传文件'
         dist_filename = quote(dist_filename) # URL编码
@@ -342,7 +353,7 @@ def upload_video(video_filename: str):
     for i in filenames:
         local_filename = i[0]
         dist_filename = i[1]
-        pool.apply_async(session.upload_alist, args=[token, local_filename, dist_filename, True])
+        pool.apply_async(session.upload_alist_action, args=[token, local_filename, dist_filename])
     pool.close()
 
 # 加载toml
