@@ -140,17 +140,18 @@ class RequestHandler(BaseHTTPRequestHandler):
             # 处理blrec请求
             json_obj = json.loads(data)
             event_type = json_obj['type']
+            session = AutoRecSession()
+            session.mount('http://', requests.adapters.HTTPAdapter(max_retries=3))
             # 根据接收到的blrec webhook参数执行相应操作
             # 更新：不用套try语句，要是出错http模块会自己处理
             if event_type == 'RecordingFinishedEvent':
-                # 录制完成，更新cookies
-                refresh_cookies()
+                # 录制完成，如果没有其他在录制的任务的话就更新一下cookies
+                if not session.get_blrec_data(select='recording'):
+                    refresh_cookies()
             elif event_type == 'VideoPostprocessingCompletedEvent':
                 # 视频后处理完成，上传+自动备份
                 # 获取直播间信息
                 room_id = json_obj['data']['room_id']
-                session = AutoRecSession()
-                session.mount('http://', requests.adapters.HTTPAdapter(max_retries=3))
                 room_info = session.get_blrec_data(room_id)
                 # 上传
                 filename = json_obj['data']['path']
@@ -388,10 +389,18 @@ class AutoRecSession(requests.Session):
         # 请求API
         self.patch(url, data=body, timeout=10)
     
-    def get_blrec_data(self, room_id):
-        '获取房间信息'
-        url = "http://{}:{}{}".format(host_blrec, port_blrec, '/api/v1/tasks/{}/data'.format(room_id))
-        response = self.get(url=url)
+    def get_blrec_data(self, room_id=-1, page=1, size=100, select="all"):
+        '获取blrec信息'
+        params = {
+            "select": select,
+            "size": size,
+            "page": page,
+            }
+        if room_id != -1:
+            url = "http://{}:{}{}".format(host_blrec, port_blrec, '/api/v1/tasks/{}/data'.format(room_id))
+        else:
+            url = "http://{}:{}{}".format(host_blrec, port_blrec, '/api/v1/tasks/data')
+        response = self.get(url=url, params=params)
         response_json = response.json()
 
         return response_json
