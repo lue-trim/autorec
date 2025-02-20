@@ -6,11 +6,11 @@ import bilibili_api as bili
 
 def usage():
     '--help'
-    print("检查并更新cookies\
--l / --login\t扫码登录\
--c / --cookies\t检查cookies, 并决定是否刷新\
--s / --sync\t将cookies同步到blrec\
--f / --forced\t不管cookies有没有过期都强制刷新(optional)")
+    print("""检查并更新cookies
+-l / --login\t扫码登录
+-c / --cookies\t检查cookies, 并决定是否刷新
+-s / --sync\t将cookies同步到blrec
+-f / --forced\t不管cookies有没有过期都强制刷新(optional)""")
     quit()
 
 def cookie_dict2str(data:dict):

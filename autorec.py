@@ -666,11 +666,11 @@ def add_autobackup(autobackuper:AutoBackuper, settings_autobackup:dict, local_di
         except Exception:
             traceback.print_exc()
 
+# 加载toml
+Settings.load_settings()
+
 # main
 if __name__ == "__main__":
-    # 加载toml
-    Settings.load_settings()
-
     # 自动备份
     autobackuper = AutoBackuper()
     autobackuper.start_check(Settings.settings_autobackup)
