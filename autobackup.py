@@ -30,7 +30,7 @@ def add_task(url, local_dir, config_file):
     data = response.json()
     print("添加成功", data['data'], sep='\n')
 
-def del_retry_task(url, index, retry=False, is_clear_all=False):
+def del_retry_task(url, index=-1, retry=False, is_clear_all=False):
     '删除或重试任务'
     import requests, json
     # 请求参数
@@ -39,7 +39,7 @@ def del_retry_task(url, index, retry=False, is_clear_all=False):
     }
     data = {
         "id": index,
-        "del_all": is_clear_all,
+        "all": is_clear_all,
     }
 
     # 请求API
@@ -90,7 +90,7 @@ def main():
     # 初始化
     local_dir = ""
     config_file = "settings.toml"
-    index = ""
+    index = -1
     is_all = False
     is_show = False
     is_add = False
@@ -132,7 +132,7 @@ def main():
     if is_add and (config_file == "" or local_dir == ""):
         print("添加配置任务请指定配置文件和目录")
         usage()
-    if (is_delete or is_retry) and (index == "" or not is_all):
+    if (is_delete or is_retry) and (index == "" and not is_all):
         print("请使用-i指定要删除的任务id或使用--all清空列表")
         is_delete = False
         is_show = True

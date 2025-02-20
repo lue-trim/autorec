@@ -46,6 +46,7 @@ host_server = 'localhost'
 port_server = 23560
 """
 
+    @classmethod
     def load_settings(self):
         '加载设置'
         if not os.path.exists("settings.toml"):
@@ -150,7 +151,7 @@ class AutoBackuper():
         '循环检查时间'
         while self.running:
             for task_id, task_dict in enumerate(self.task_list):
-                if datetime.datetime.now() >= task_dict['time'] and task_dict['status'] is 'waiting':
+                if datetime.datetime.now() >= task_dict['time'] and task_dict['status'] == 'waiting':
                     # 发现到点了并且待上传
                     print(f"Auto backuping...\n{task_dict}")
                     self.change_status(task_id, 'uploading')
@@ -241,13 +242,15 @@ class RequestHandler(BaseHTTPRequestHandler):
         if path == 'autobackup':
             # 重试备份任务
             json_obj = json.loads(data)
-            id = json_obj['id']
+            id = json_obj.get('id', -1)
             if json_obj.get('all', False):
                 for idx, task in enumerate(autobackuper.task_list):
-                    if task['status'] is "failed":
+                    if task['status'] == "failed":
                         autobackuper.change_status(idx, "waiting")
                 status = autobackuper.show_status()
             else:
+                if type(id) is not int:
+                    self.reply(code=500, message='非法id数据类型')
                 status = autobackuper.change_status(id, "waiting")
             # 回复
             self.reply(message='Readded backup task.', data=status)
