@@ -6,6 +6,81 @@ import urllib3
 from urllib.parse import unquote, quote
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
+class Settings():
+    '设置类'
+    DEFAULT_SETTINGS = r"""[blrec]
+host_blrec = 'localhost'
+port_blrec = 2233
+
+[alist]
+enabled = true # optional, true for default
+port_alist = 5244
+host_alist = 'localhost'
+username = 'wase'
+password = 'AFFA9DBA2C1A74EB34F1585110B0A414F9693AF93BC52C218BE2EEBE7309C43B'
+# secured password format: sha256(<your password>-https://github.com/alist-org/alist)
+remote_dir = '/quark/2024_下/{time/%y%m%d}_{room_info/title}'
+# usage: {time/<time formatting expressions>} or {<keys of recording properties>/<attribute>}
+# (Refer to README.md)
+remove_after_upload = false # optional, whether delete local file after upload, false by default
+retry_times = 6 # Not implemented, but maybe useful in the future 
+
+[autobackup]
+# Settings for auto backup
+timer_interval = 60 # optional, seconds of upload timer interval
+[[autobackup.servers]]
+# Support multiple remote configs, the same format as 'alist' part above
+# For example, when remote_dir is set to /xxx, then it seems like:
+# local(automatically get from blrec): /aaa/bbb/ccc/d.flv(xml,jsonl...) -> remote: /xxx/ccc/d.flv(xml,jsonl...)
+enabled = true
+time = "07:00:00"
+port_alist = 5244
+host_alist = '192.168.1.1'
+username = 'username'
+password = 'SHA-256'
+remote_dir = '/remote/records/'
+remove_after_upload = false
+
+[server]
+host_server = 'localhost'
+port_server = 23560
+"""
+
+    def load_settings(self):
+        '加载设置'
+        if not os.path.exists("settings.toml"):
+            with open("settings.toml", 'w', encoding='utf-8') as f:
+                print("正在导出默认配置")
+                f.write(self.DEFAULT_SETTINGS)
+                quit()
+        else:
+            with open("settings.toml", 'r', encoding='utf-8') as f:
+                self.settings = toml.load(f)
+        
+            ## blrec
+            self.settings_blrec = self.settings['blrec']
+            self.host_blrec = self.settings_blrec['host_blrec']
+            self.port_blrec = self.settings_blrec['port_blrec']
+
+            ## alist
+            self.settings_alist:dict = self.settings['alist']
+            self.settings_alist.setdefault('remove_after_upload', False)
+            self.settings_alist.setdefault('enabled', True)
+
+            ## autobackup
+            self.settings_autobackup:dict = self.settings['autobackup']
+            self.settings_autobackup.setdefault('timer_interval', 60)
+            # self.settings_autobackup.setdefault('retry_times', 6)
+            self.settings_autobackup.setdefault('servers', [])
+            for i in self.settings_autobackup['servers']:
+                i.setdefault('remove_after_upload', False)
+                i.setdefault('enabled', True)
+
+            ## server
+            self.settings_server = self.settings['server']
+            self.host_server = self.settings_server['host_server']
+            self.port_server = self.settings_server['port_server']
+
 class AutoBackuper():
     '自动备份工具'
     def __init__(self) -> None:
@@ -18,25 +93,33 @@ class AutoBackuper():
             'time': t,
             'local_dir': local_dir,
             'settings_alist': settings_alist,
+            'status': 'waiting',
         }
 
         # 查重
         if task_dict not in self.task_list:
             print(f"Auto backuping task created on {t}, {local_dir} -> {settings_alist['remote_dir']}")
             self.task_list.append(task_dict)
-    
-    def del_task(self, id:int):
+
+    def del_task(self, id:int, del_all=False):
         '删除任务'
-        if 0 <= id < len(self.task_list):
+        if del_all:
+            self.task_list = []
+        elif 0 <= id < len(self.task_list):
             del self.task_list[id]
         return self.show_status()
-    
+
+    def change_status(self, id:int, status:str):
+        '改变任务状态'
+        self.task_list[id]['status'] = status
+        return self.show_status()
+
     def __upload_action(self, task_dict):
         '执行上传'
         # session
         session = AutoRecSession()
         session.mount('http://', requests.adapters.HTTPAdapter(max_retries=3))
-        token = session.get_alist_token(settings_alist)
+        token = session.get_alist_token(Settings.settings_alist)
         
         # 分离参数
         local_dir = task_dict['local_dir']
@@ -67,13 +150,19 @@ class AutoBackuper():
         '循环检查时间'
         while self.running:
             for task_id, task_dict in enumerate(self.task_list):
-                if datetime.datetime.now() >= task_dict['time']:
-                    # 发现到点了
+                if datetime.datetime.now() >= task_dict['time'] and task_dict['status'] is 'waiting':
+                    # 发现到点了并且待上传
                     print(f"Auto backuping...\n{task_dict}")
+                    self.change_status(task_id, 'uploading')
                     # 上传
-                    self.__upload_action(task_dict)
-                    # 删除自动备份任务
-                    del self.task_list[task_id]
+                    try:
+                        self.__upload_action(task_dict)
+                    except:
+                        traceback.print_exc()
+                        self.change_status(task_id, 'failed')
+                    else:
+                        # 标记为已完成
+                        self.change_status(task_id, 'completed')
                     break
             # 接着睡
             time.sleep(interval)
@@ -91,8 +180,9 @@ class AutoBackuper():
         res_str = ''
         for idx, i in enumerate(self.task_list):
             config_temp = i['settings_alist']
-            res_str += "ID: {} \tScheduled Time: {} \tLocal dir:{} \tRemote dir:{} \n".format(
+            res_str += "ID: {} \tStatus: {} \tScheduled Time: {} \tLocal dir:{} \tRemote dir:{} \n".format(
                 idx,
+                i['status'],
                 i['time'].strftime(r"%y/%m/%dT%H:%M:%S"),
                 i['local_dir'],
                 f"{config_temp['host_alist']}:{config_temp['port_alist']}{config_temp['remote_dir']}"
@@ -102,6 +192,18 @@ class AutoBackuper():
 # classes
 class RequestHandler(BaseHTTPRequestHandler):
     '网络请求服务器'
+    def do_PUT(self):
+        # 读取参数
+        data = self.rfile.read(int(self.headers['content-length']))
+        data = unquote(str(data, encoding='utf-8'))
+        path = self.path.replace("/",'')
+        if path == 'autobackup':
+            Settings.load_settings()
+            # 回复
+            self.reply(message='Settings reloaded.')
+        else:
+            self.reply(code=404)
+
     def do_GET(self):
         # 读取参数
         data = self.rfile.read(int(self.headers['content-length'])) # content-length不能去掉
@@ -109,7 +211,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         path = self.path.replace("/",'')
         if path == 'autobackup':
             # 回复
-            self.reply(message='Backup task got.', data=autobackuper.show_status())
+            self.reply(message='Backup task sent.', data=autobackuper.show_status())
         else:
             self.reply(code=404)
 
@@ -123,9 +225,32 @@ class RequestHandler(BaseHTTPRequestHandler):
             # 删除备份任务
             json_obj = json.loads(data)
             id = json_obj['id']
-            status = autobackuper.del_task(int(id))
+            is_del_all = json_obj.get('all', False)
+            status = autobackuper.del_task(int(id), is_del_all)
             # 回复
             self.reply(message='Backup task complete.', data=status)
+        else:
+            self.reply(code=404)
+
+    def do_PATCH(self):
+        '接收PATCH信息'
+        # 读取参数
+        data = self.rfile.read(int(self.headers['content-length']))
+        data = unquote(str(data, encoding='utf-8'))
+        path = self.path.replace("/",'')
+        if path == 'autobackup':
+            # 重试备份任务
+            json_obj = json.loads(data)
+            id = json_obj['id']
+            if json_obj.get('all', False):
+                for idx, task in enumerate(autobackuper.task_list):
+                    if task['status'] is "failed":
+                        autobackuper.change_status(idx, "waiting")
+                status = autobackuper.show_status()
+            else:
+                status = autobackuper.change_status(id, "waiting")
+            # 回复
+            self.reply(message='Readded backup task.', data=status)
         else:
             self.reply(code=404)
 
@@ -155,10 +280,13 @@ class RequestHandler(BaseHTTPRequestHandler):
                 room_info = session.get_blrec_data(room_id)
                 # 上传
                 filename = json_obj['data']['path']
-                upload_video(filename, rec_info=room_info, settings_alist=settings_alist)
+                try:
+                    upload_video(filename, rec_info=room_info, settings_alist=Settings.settings_alist)
+                except:
+                    traceback.print_exc()
                 # 自动备份
                 local_dir = os.path.split(filename)[0]
-                add_autobackup(autobackuper=autobackuper, settings_autobackup=settings_autobackup, local_dir=local_dir)
+                add_autobackup(autobackuper=autobackuper, settings_autobackup=Settings.settings_autobackup, local_dir=local_dir)
             else:
                 print("Got new Event: ", event_type)
             # 回复
@@ -325,8 +453,9 @@ class AutoRecSession(requests.Session):
             except:
                 traceback.print_exc()
                 time.sleep(4**i)
-            else:
-                break
+        else:
+            from requests.exceptions import RequestException
+            raise RequestException()
 
     def upload_alist(self, settings_alist:dict, token:str, filename:str, dest_filename:str):
         '流式上传文件'
@@ -383,6 +512,8 @@ class AutoRecSession(requests.Session):
 
     def set_blrec(self, data: dict):
         '更改blrec设置'
+        host_blrec = Settings.host_blrec
+        port_blrec = Settings.port_blrec
         url = "http://{}:{}{}".format(host_blrec, port_blrec, '/api/v1/settings')
         body = utils.dict2str(data)
 
@@ -391,6 +522,8 @@ class AutoRecSession(requests.Session):
     
     def get_blrec_data(self, room_id=-1, page=1, size=100, select="all"):
         '获取blrec信息'
+        host_blrec = Settings.host_blrec
+        port_blrec = Settings.port_blrec
         params = {
             "select": select,
             "size": size,
@@ -530,84 +663,17 @@ def add_autobackup(autobackuper:AutoBackuper, settings_autobackup:dict, local_di
         except Exception:
             traceback.print_exc()
 
-# 加载toml
-if not os.path.exists("settings.toml"):
-    with open("settings.toml", 'w', encoding='utf-8') as f:
-        print("正在导出默认配置")
-        DEFAULT_SETTINGS = r"""[blrec]
-host_blrec = 'localhost'
-port_blrec = 2233
-
-[alist]
-enabled = true # optional, true for default
-port_alist = 5244
-host_alist = 'localhost'
-username = 'wase'
-password = 'AFFA9DBA2C1A74EB34F1585110B0A414F9693AF93BC52C218BE2EEBE7309C43B'
-# password format: sha256(<your password>-https://github.com/alist-org/alist)
-remote_dir = '/quark/2024_下/{time/%y%m%d}_{room_info/title}'
-# usage: {time/<time formatting expressions>} or {<keys of recording properties>/<attribute>}
-# (Refer to README.md)
-remove_after_upload = false # optional, whether delete local file after upload, false by default
-
-[autobackup]
-# Settings for auto backup
-timer_interval = 60 # optional, seconds of upload timer interval
-[[autobackup.servers]]
-# Support multiple remote configs, the same format as 'alist' part above
-# For example, when remote_dir is set to /xxx, then it seems like:
-# local(automatically get from blrec): /aaa/bbb/ccc/d.flv(xml,jsonl...) -> remote: /xxx/ccc/d.flv(xml,jsonl...)
-enabled = true
-time = "07:00:00"
-port_alist = 5244
-host_alist = 'gaazar.cc'
-username = 'username'
-password = 'SHA-256'
-remote_dir = '/remote/records/'
-remove_after_upload = false
-
-[server]
-host_server = 'localhost'
-port_server = 23560
-"""
-        f.write(DEFAULT_SETTINGS)
-        quit()
-else:
-    with open("settings.toml", 'r', encoding='utf-8') as f:
-        settings = toml.load(f)
-
-# const
-## blrec
-settings_blrec = settings['blrec']
-host_blrec = settings_blrec['host_blrec']
-port_blrec = settings_blrec['port_blrec']
-
-## alist
-settings_alist:dict = settings['alist']
-settings_alist.setdefault('remove_after_upload', False)
-settings_alist.setdefault('enabled', True)
-
-## autobackup
-settings_autobackup:dict = settings['autobackup']
-settings_autobackup.setdefault('timer_interval', 60)
-settings_autobackup.setdefault('servers', [])
-for i in settings_autobackup['servers']:
-    i.setdefault('remove_after_upload', False)
-    i.setdefault('enabled', True)
-
-## server
-settings_server = settings['server']
-host_server = settings_server['host_server']
-port_server = settings_server['port_server']
-
 # main
 if __name__ == "__main__":
+    # 加载toml
+    Settings.load_settings()
+
     # 自动备份
     autobackuper = AutoBackuper()
-    autobackuper.start_check(settings_autobackup)
+    autobackuper.start_check(Settings.settings_autobackup)
 
     # 监听
-    addr = (host_server, port_server)
+    addr = (Settings.host_server, Settings.port_server)
     server = HTTPServer(addr, RequestHandler)
     try:
         server.serve_forever()
