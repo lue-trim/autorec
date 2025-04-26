@@ -501,7 +501,6 @@ def add_autobackup(autobackuper:AutoBackuper, settings_autobackup:dict, local_di
 
 # 初始化
 static.autobackuper = AutoBackuper()
-static.autobackuper.start_check(config.autobackup)
 
 static.session = AutoRecSession(max_retries=config.app['max_retries'])
 logger.debug("Initialized server config.")

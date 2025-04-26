@@ -136,6 +136,7 @@ async def blrec_webhook(data: BlrecWebhookData|str):
 
 if __name__ == "__main__":
     # static.init()
+    autobackuper.start_check(config.autobackup)
     logger.info("Autorec service started.")
     uvicorn.run(
         app=app, 

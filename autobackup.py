@@ -36,7 +36,7 @@ def add_task(url, local_dir, config_file, now=False):
     response = requests.post(url=url, params=data, headers=headers)
     data = response.json()
     logger.info("Autobackup task created.")
-    logger.info(data)
+    # logger.info(data)
     print(data['data'])
 
 def del_retry_task(url, index=-1, retry=False, is_clear_all=False):

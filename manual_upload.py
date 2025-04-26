@@ -1,5 +1,7 @@
 import autorec
 import getopt, os, sys, toml
+from static import config, logger
+from tortoise import run_async
 
 def usage():
     '--help'
@@ -38,24 +40,24 @@ def main():
             del filenames[idx]
     
     # 读取配置
-    with open(config_file, 'r', encoding='utf-8') as f:
-        settings = toml.load(f)
-    settings_autobackup:dict = settings['autobackup']
+    if config_file != "settings.toml":
+        config.load(config_file)
+    settings_autobackup = config.autobackup
 
     # 读取备份设置
     for settings_alist in settings_autobackup['servers']:
         dest_dir = settings_alist['remote_dir']
         # 获取token
         session = autorec.AutoRecSession()
-        token = session.get_alist_token(settings_alist)
+        token = run_async(session.get_alist_token(settings_alist))
 
         # 上传
         total = len(filenames)
         for idx, filename in enumerate(filenames):
             local_filename = os.path.join(local_dir, filename)
             dest_filename = os.path.join(dest_dir, last_dir, filename)
-            print("Uploading: {} -> {} ({}/{})".format(local_filename, dest_filename, idx+1, total))
-            session.upload_alist(settings_alist, token, local_filename, dest_filename)
+            logger.log("Uploading: {} -> {} ({}/{})".format(local_filename, dest_filename, idx+1, total))
+            run_async(session.upload_alist(settings_alist, token, local_filename, dest_filename))
     
 if __name__ == "__main__":
     main()
