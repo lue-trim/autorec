@@ -1,7 +1,7 @@
 import os, time, requests, re, json, traceback, datetime
 import asyncio
 # import http.cookiejar, requests.utils
-import urllib3
+# import urllib3
 
 from aiohttp import ClientSession, ClientError
 from typing import Any, TypeVar, Coroutine, Union
@@ -33,7 +33,7 @@ class AutoBackuper():
 
         # 查重
         if task_dict not in self.task_list:
-            print(f"Auto backuping task created on {t}, {local_dir} -> {settings_alist['remote_dir']}")
+            logger.info(f"Auto backuping task created on {t}, {local_dir} -> {settings_alist['remote_dir']}")
             self.task_list.append(task_dict)
 
     def del_task(self, id:int, del_all=False):
@@ -193,8 +193,11 @@ class AutoRecSession():
                             response = await res.json()
                             # logger.debug(response)
                     elif req_type == "put":
-                        async with session.put(**kwargs) as res:
-                            response = await res.json()
+                        with open(kwargs['filename'], 'rb') as f:
+                            del kwargs['filename']
+                            kwargs.update({'data': f})
+                            async with session.put(**kwargs) as res:
+                                response = await res.json()
                     elif req_type == "patch":
                         async with session.patch(**kwargs) as res:
                             response = await res.json()
@@ -206,7 +209,7 @@ class AutoRecSession():
                             response = await res.json()
             except ClientError as e:
                 logger.error(f"Request Error: {e}")
-                await asyncio.sleep(2**i)
+                await asyncio.sleep(4**i)
             except Exception:
                 logger.error(f"Unknown Error: {traceback.format_exc()}")
             else:
@@ -224,9 +227,9 @@ class AutoRecSession():
         return await self.request(req_type="post", **kwargs)
 
     @classmethod
-    async def put(self, **kwargs):
+    async def put(self, filename, **kwargs):
         'PUT'
-        return await self.request(req_type="put", **kwargs)
+        return await self.request(req_type="put", filename=filename, **kwargs)
 
     @classmethod
     async def patch(self, **kwargs):
@@ -327,11 +330,12 @@ class AutoRecSession():
         }
 
         # 打开文件
-        with open(filename, 'rb') as f:
-            # data = File(f, filename) # aiohttp的put没有requests库那种奇怪的bug, 不用自定义File类
-            data = f
-            # 请求API
-            response_json = await self.put(url=url, data=data, headers=headers)
+        response_json = await self.put(url=url, filename=filename, headers=headers)
+        # with open(filename, 'rb') as f:
+        #     # data = File(f, filename) # aiohttp的put没有requests库那种奇怪的bug, 不用自定义File类
+        #     data = f
+        #     # 请求API
+        #     response_json = await self.put(url=url, data=data, headers=headers)
         
         if response_json['code'] == 200:
             logger.info(f"Upload success: {filename}")
