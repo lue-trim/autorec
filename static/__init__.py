@@ -101,7 +101,7 @@ level = "INFO"
         self.__alist.setdefault('remove_after_upload', False)
         self.__alist.setdefault('enabled', True)
 
-        self.__autobackup.setdefault('timer_interval', 60)
+        self.__autobackup.setdefault('interval', 60)
         # self.settings_autobackup.setdefault('retry_times', 6)
         self.__autobackup.setdefault('servers', [])
         for i in self.__autobackup['servers']:

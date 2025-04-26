@@ -10,8 +10,8 @@ from concurrent.futures import Future as ConcurrentFuture
 T = TypeVar("T")
 
 from urllib.parse import unquote, quote
-from static import config, session, logger
-import static
+from static import config, logger
+import static # session不要直接从这里导入
 
 class AutoBackuper():
     '自动备份工具'
@@ -63,18 +63,20 @@ class AutoBackuper():
                 del filenames[idx]
         
         # 获取token
-        token = await session.get_alist_token(settings_temp)
+        token = await static.session.get_alist_token(settings_temp)
 
         # 上传文件
-        loop = asyncio.get_event_loop()
-        tasks = []
+        # 这里用异步会提示RuntimeError: Cannot run the event loop while another loop is running
+        # loop = asyncio.new_event_loop()
+        # tasks = []
         for filename in filenames:
             local_filename = os.path.join(local_dir, filename)
             dest_filename = os.path.join(dest_dir, filename)
-            tasks.append(session.upload_alist(settings_temp, token, local_filename, dest_filename))
-        wait_coro = asyncio.wait(tasks)
-        loop.run_until_complete(wait_coro)
-        loop.close()
+            await static.session.upload_alist(settings_temp, token, local_filename, dest_filename)
+            # tasks.append(static.session.upload_alist(settings_temp, token, local_filename, dest_filename))
+        # wait_coro = asyncio.wait(tasks)
+        # loop.run_until_complete(wait_coro)
+        # loop.close()
     
     def __check_time(self, interval):
         '循环检查时间'
@@ -86,7 +88,7 @@ class AutoBackuper():
                     self.change_status(task_id, 'uploading')
                     # 上传
                     try:
-                        utils.run_async(self.__upload_action(task_dict))
+                        asyncio.run(self.__upload_action(task_dict))
                     except Exception as e:
                         logger.error(traceback.format_exc())
                         self.change_status(task_id, 'failed')
@@ -100,7 +102,7 @@ class AutoBackuper():
     def start_check(self, settings_autobackup:dict):
         '启动循环检查'
         import threading
-        interval = settings_autobackup['timer_interval']
+        interval = settings_autobackup['interval']
         t = threading.Thread(target=self.__check_time, args=[interval])
         t.start()
         return t
@@ -181,57 +183,59 @@ class AutoRecSession():
 
     @classmethod
     async def request(self, req_type, **kwargs):
-        '请求'
-        success = False
+        '发送请求'
         for i in range(self.max_retries):
             try:
                 logger.debug(f"Trying request {kwargs['url']} ({i+1}/{self.max_retries})")
                 async with ClientSession() as session:
                     if req_type == "post":
                         async with session.post(**kwargs) as res:
-                            return await res.json()
+                            response = await res.json()
+                            # logger.debug(response)
                     elif req_type == "put":
                         async with session.put(**kwargs) as res:
-                            return await res.json()
+                            response = await res.json()
                     elif req_type == "patch":
                         async with session.patch(**kwargs) as res:
-                            return await res.json()
+                            response = await res.json()
                     else:
                         async with session.get(**kwargs) as res:
-                            return await res.json()
+                            # response = await res.text()
+                            # logger.debug(response)
+                            # return
+                            response = await res.json()
             except ClientError as e:
                 logger.error(f"Request Error: {e}")
                 await asyncio.sleep(2**i)
             except Exception:
                 logger.error(f"Unknown Error: {traceback.format_exc()}")
             else:
-                success = True
-            if success:
-                break
+                # return json.loads(response)
+                return response
 
     @classmethod
     async def get(self, **kwargs):
         'GET'
-        await self.request(req_type="get", **kwargs)
+        return await self.request(req_type="get", **kwargs)
 
     @classmethod
     async def post(self, **kwargs):
         'POST'
-        await self.request(req_type="post", **kwargs)
+        return await self.request(req_type="post", **kwargs)
 
     @classmethod
     async def put(self, **kwargs):
         'PUT'
-        await self.request(req_type="put", **kwargs)
+        return await self.request(req_type="put", **kwargs)
 
     @classmethod
     async def patch(self, **kwargs):
         'PATCH'
-        await self.request(req_type="patch", **kwargs)
+        return await self.request(req_type="patch", **kwargs)
 
     async def get_alist_token(self, settings_alist:dict):
         '获取alist管理token'
-        url = f"{settings_alist['url']}/api/auth/login/hash"
+        url = f"{settings_alist['url_alist']}/api/auth/login/hash"
         params = {
             "username": settings_alist['username'],
             "password": settings_alist['password'].lower()
@@ -241,7 +245,7 @@ class AutoRecSession():
         }
 
         # 请求API
-        response_json = await self.get(url=url, data=json.dumps(params), headers=headers)
+        response_json = await self.post(url=url, data=json.dumps(params), headers=headers)
         # 获取结果
         if response_json['code'] == 200:
             return response_json['data']['token']
@@ -251,7 +255,7 @@ class AutoRecSession():
     async def copy_alist(self, settings_alist:dict, token:str, source_dir:str, filenames:list, dist_dir:str):
         '复制文件'
         # 请求参数
-        url = f"{settings_alist['url']}/api/fs/copy"
+        url = f"{settings_alist['url_alist']}/api/fs/copy"
         headers = {
             "Authorization": token,
             "Content-Type": "application/json"
@@ -263,8 +267,7 @@ class AutoRecSession():
         }
 
         # 请求API
-        response = await self.post(url=url, data=utils.dict2str(data), headers=headers)
-        data = response.json()
+        data = await self.post(url=url, data=utils.dict2str(data), headers=headers)
 
         # 获取结果
         if data['code'] == 200:
@@ -277,7 +280,7 @@ class AutoRecSession():
     async def rm_alist(self, settings_alist:dict, token:str, dirname:str, filenames:list):
         '删除文件'
         # 请求参数
-        url = f"{settings_alist['url']}/api/fs/remove"
+        url = f"{settings_alist['url_alist']}/api/fs/remove"
         headers = {
             "Authorization": token,
             "Content-Type": "application/json"
@@ -288,8 +291,7 @@ class AutoRecSession():
         }
 
         # 请求API
-        response = await self.post(url=url, data=utils.dict2str(data), headers=headers)
-        data = response.json()
+        data = await self.post(url=url, data=utils.dict2str(data), headers=headers)
 
         # 获取结果
         if data['code'] == 200:
@@ -316,7 +318,7 @@ class AutoRecSession():
         dest_filename = quote(dest_filename) # URL编码
 
         # 请求参数
-        url = f"{settings_alist['url']}/api/fs/put"
+        url = f"{settings_alist['url_alist']}/api/fs/put"
         headers = {
             "Authorization": token,
             "File-Path": dest_filename,
@@ -326,7 +328,8 @@ class AutoRecSession():
 
         # 打开文件
         with open(filename, 'rb') as f:
-            data = File(f, filename)
+            # data = File(f, filename) # aiohttp的put没有requests库那种奇怪的bug, 不用自定义File类
+            data = f
             # 请求API
             response_json = await self.put(url=url, data=data, headers=headers)
         
@@ -354,9 +357,9 @@ class AutoRecSession():
             "page": page,
             }
         if room_id != -1:
-            url = f"{config.blrec['url']}/api/v1/tasks/{room_id}/data"
+            url = f"{config.blrec['url_blrec']}/api/v1/tasks/{room_id}/data"
         else:
-            url = f"{config.blrec['url']}/api/v1/tasks/data"
+            url = f"{config.blrec['url_blrec']}/api/v1/tasks/data"
         response_json = await self.get(url=url, params=params)
 
         return response_json
@@ -449,7 +452,7 @@ async def upload_video(video_filename: str, settings_alist=None, rec_info=None):
         filenames.append([local_filename, dest_filename])
     
     # 获取token
-    token = await session.get_alist_token(settings_alist)
+    token = await static.session.get_alist_token(settings_alist)
 
     # 上传文件
     loop = asyncio.get_event_loop()
@@ -457,7 +460,7 @@ async def upload_video(video_filename: str, settings_alist=None, rec_info=None):
     for i in filenames:
         local_filename = i[0]
         dest_filename = i[1]
-        tasks.append(session.upload_alist(settings_alist, token, local_filename, dest_filename))
+        tasks.append(static.session.upload_alist(settings_alist, token, local_filename, dest_filename))
     wait_coro = asyncio.wait(tasks)
     loop.run_until_complete(wait_coro)
     loop.close()
