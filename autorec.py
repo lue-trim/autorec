@@ -1,90 +1,24 @@
-import requests.adapters
-import os, time, requests, re, json, toml, multiprocessing, traceback, datetime, threading
-import http.cookiejar, requests.utils
+import os, time, requests, re, json, traceback, datetime
+import asyncio
+# import http.cookiejar, requests.utils
 import urllib3
 
+from aiohttp import ClientSession, ClientError
+from typing import Any, TypeVar, Coroutine, Union
+from asyncio.futures import Future as AsyncioFuture
+from concurrent.futures import Future as ConcurrentFuture
+T = TypeVar("T")
+
 from urllib.parse import unquote, quote
-from http.server import HTTPServer, BaseHTTPRequestHandler
-
-class Settings():
-    '设置类'
-    DEFAULT_SETTINGS = r"""[blrec]
-host_blrec = 'localhost'
-port_blrec = 2233
-
-[alist]
-enabled = true # optional, true for default
-port_alist = 5244
-host_alist = 'localhost'
-username = 'wase'
-password = 'AFFA9DBA2C1A74EB34F1585110B0A414F9693AF93BC52C218BE2EEBE7309C43B'
-# secured password format: sha256(<your password>-https://github.com/alist-org/alist)
-remote_dir = '/quark/2024_下/{time/%y%m%d}_{room_info/title}'
-# usage: {time/<time formatting expressions>} or {<keys of recording properties>/<attribute>}
-# (Refer to README.md)
-remove_after_upload = false # optional, whether delete local file after upload, false by default
-retry_times = 6 # Not implemented, but maybe useful in the future 
-
-[autobackup]
-# Settings for auto backup
-timer_interval = 60 # optional, seconds of upload timer interval
-[[autobackup.servers]]
-# Support multiple remote configs, the same format as 'alist' part above
-# For example, when remote_dir is set to /xxx, then it seems like:
-# local(automatically get from blrec): /aaa/bbb/ccc/d.flv(xml,jsonl...) -> remote: /xxx/ccc/d.flv(xml,jsonl...)
-enabled = true
-time = "07:00:00"
-port_alist = 5244
-host_alist = '192.168.1.1'
-username = 'username'
-password = 'SHA-256'
-remote_dir = '/remote/records/'
-remove_after_upload = false
-
-[server]
-host_server = 'localhost'
-port_server = 23560
-"""
-
-    @classmethod
-    def load_settings(self):
-        '加载设置'
-        if not os.path.exists("settings.toml"):
-            with open("settings.toml", 'w', encoding='utf-8') as f:
-                print("正在导出默认配置")
-                f.write(self.DEFAULT_SETTINGS)
-                quit()
-        else:
-            with open("settings.toml", 'r', encoding='utf-8') as f:
-                self.settings = toml.load(f)
-        
-            ## blrec
-            self.settings_blrec = self.settings['blrec']
-            self.host_blrec = self.settings_blrec['host_blrec']
-            self.port_blrec = self.settings_blrec['port_blrec']
-
-            ## alist
-            self.settings_alist:dict = self.settings['alist']
-            self.settings_alist.setdefault('remove_after_upload', False)
-            self.settings_alist.setdefault('enabled', True)
-
-            ## autobackup
-            self.settings_autobackup:dict = self.settings['autobackup']
-            self.settings_autobackup.setdefault('timer_interval', 60)
-            # self.settings_autobackup.setdefault('retry_times', 6)
-            self.settings_autobackup.setdefault('servers', [])
-            for i in self.settings_autobackup['servers']:
-                i.setdefault('remove_after_upload', False)
-                i.setdefault('enabled', True)
-
-            ## server
-            self.settings_server = self.settings['server']
-            self.host_server = self.settings_server['host_server']
-            self.port_server = self.settings_server['port_server']
+from static import config, session, logger
+import static
 
 class AutoBackuper():
     '自动备份工具'
-    def __init__(self) -> None:
+    running: bool = True
+    task_list: list = []
+
+    def init(self) -> None:
         self.task_list = []
         self.running = True
 
@@ -115,13 +49,8 @@ class AutoBackuper():
         self.task_list[id]['status'] = status
         return self.show_status()
 
-    def __upload_action(self, task_dict):
+    async def __upload_action(self, task_dict):
         '执行上传'
-        # session
-        session = AutoRecSession()
-        session.mount('http://', requests.adapters.HTTPAdapter(max_retries=3))
-        token = session.get_alist_token(Settings.settings_alist)
-        
         # 分离参数
         local_dir = task_dict['local_dir']
         settings_temp = task_dict['settings_alist']
@@ -134,18 +63,18 @@ class AutoBackuper():
                 del filenames[idx]
         
         # 获取token
-        session = AutoRecSession()
-        session.mount('http://', requests.adapters.HTTPAdapter(max_retries=3))
-        token = session.get_alist_token(settings_temp)
+        token = await session.get_alist_token(settings_temp)
 
         # 上传文件
-        pool = multiprocessing.Pool()
+        loop = asyncio.get_event_loop()
+        tasks = []
         for filename in filenames:
             local_filename = os.path.join(local_dir, filename)
             dest_filename = os.path.join(dest_dir, filename)
-            pool.apply_async(session.upload_alist_action, args=[settings_temp, token, local_filename, dest_filename])
-        pool.close()
-        pool.join()
+            tasks.append(session.upload_alist(settings_temp, token, local_filename, dest_filename))
+        wait_coro = asyncio.wait(tasks)
+        loop.run_until_complete(wait_coro)
+        loop.close()
     
     def __check_time(self, interval):
         '循环检查时间'
@@ -153,13 +82,13 @@ class AutoBackuper():
             for task_id, task_dict in enumerate(self.task_list):
                 if datetime.datetime.now() >= task_dict['time'] and task_dict['status'] == 'waiting':
                     # 发现到点了并且待上传
-                    print(f"Auto backuping...\n{task_dict}")
+                    logger.debug(f"Auto backuping...\n{task_dict}")
                     self.change_status(task_id, 'uploading')
                     # 上传
                     try:
-                        self.__upload_action(task_dict)
-                    except:
-                        traceback.print_exc()
+                        utils.run_async(self.__upload_action(task_dict))
+                    except Exception as e:
+                        logger.error(traceback.format_exc())
                         self.change_status(task_id, 'failed')
                     else:
                         # 标记为已完成
@@ -186,140 +115,11 @@ class AutoBackuper():
                 i['status'],
                 i['time'].strftime(r"%y/%m/%dT%H:%M:%S"),
                 i['local_dir'],
-                f"{config_temp['host_alist']}:{config_temp['port_alist']}{config_temp['remote_dir']}"
+                f"{config_temp['url_alist']}{config_temp['remote_dir']}"
             )
         return res_str
 
 # classes
-class RequestHandler(BaseHTTPRequestHandler):
-    '网络请求服务器'
-    def do_PUT(self):
-        # 读取参数
-        data = self.rfile.read(int(self.headers['content-length']))
-        data = unquote(str(data, encoding='utf-8'))
-        path = self.path.replace("/",'')
-        if path == 'autobackup':
-            Settings.load_settings()
-            # 回复
-            self.reply(message='Settings reloaded.')
-        else:
-            self.reply(code=404)
-
-    def do_GET(self):
-        # 读取参数
-        data = self.rfile.read(int(self.headers['content-length'])) # content-length不能去掉
-        data = unquote(str(data, encoding='utf-8'))
-        path = self.path.replace("/",'')
-        if path == 'autobackup':
-            # 回复
-            self.reply(message='Backup task sent.', data=autobackuper.show_status())
-        else:
-            self.reply(code=404)
-
-    def do_DELETE(self):
-        '接收DELETE信息'
-        # 读取参数
-        data = self.rfile.read(int(self.headers['content-length']))
-        data = unquote(str(data, encoding='utf-8'))
-        path = self.path.replace("/",'')
-        if path == 'autobackup':
-            # 删除备份任务
-            json_obj = json.loads(data)
-            id = json_obj['id']
-            is_del_all = json_obj.get('all', False)
-            status = autobackuper.del_task(int(id), is_del_all)
-            # 回复
-            self.reply(message='Backup task complete.', data=status)
-        else:
-            self.reply(code=404)
-
-    def do_PATCH(self):
-        '接收PATCH信息'
-        # 读取参数
-        data = self.rfile.read(int(self.headers['content-length']))
-        data = unquote(str(data, encoding='utf-8'))
-        path = self.path.replace("/",'')
-        if path == 'autobackup':
-            # 重试备份任务
-            json_obj = json.loads(data)
-            id = json_obj.get('id', -1)
-            if json_obj.get('all', False):
-                for idx, task in enumerate(autobackuper.task_list):
-                    if task['status'] == "failed":
-                        autobackuper.change_status(idx, "waiting")
-                status = autobackuper.show_status()
-            else:
-                if type(id) is not int:
-                    self.reply(code=500, message='非法id数据类型')
-                status = autobackuper.change_status(id, "waiting")
-            # 回复
-            self.reply(message='Readded backup task.', data=status)
-        else:
-            self.reply(code=404)
-
-    def do_POST(self):
-        '接收到POST信息时'
-        # 读取参数
-        data = self.rfile.read(int(self.headers['content-length']))
-        data = unquote(str(data, encoding='utf-8'))
-        path = self.path.replace("/",'')
-
-        if path == "blrec":
-            # 处理blrec请求
-            json_obj = json.loads(data)
-            event_type = json_obj['type']
-            session = AutoRecSession()
-            session.mount('http://', requests.adapters.HTTPAdapter(max_retries=3))
-            # 根据接收到的blrec webhook参数执行相应操作
-            # 更新：不用套try语句，要是出错http模块会自己处理
-            if event_type == 'RecordingFinishedEvent':
-                # 录制完成，如果没有其他在录制的任务的话就更新一下cookies
-                if not session.get_blrec_data(select='recording'):
-                    refresh_cookies()
-            elif event_type == 'VideoPostprocessingCompletedEvent':
-                # 视频后处理完成，上传+自动备份
-                # 获取直播间信息
-                room_id = json_obj['data']['room_id']
-                room_info = session.get_blrec_data(room_id)
-                # 上传
-                filename = json_obj['data']['path']
-                try:
-                    upload_video(filename, rec_info=room_info, settings_alist=Settings.settings_alist)
-                except:
-                    traceback.print_exc()
-                # 自动备份
-                local_dir = os.path.split(filename)[0]
-                add_autobackup(autobackuper=autobackuper, settings_autobackup=Settings.settings_autobackup, local_dir=local_dir)
-            else:
-                print("Got new Event: ", event_type)
-            # 回复
-            self.reply()
-        
-        elif path == "autobackup":
-            # 添加备份任务
-            json_obj = json.loads(data)
-            # 获取数据
-            local_dir = json_obj['local_dir']
-            config_toml = json_obj['config_toml']
-            with open(config_toml, 'r', encoding='utf-8') as f:
-                settings_temp = toml.load(f)
-            # 添加
-            add_autobackup(autobackuper=autobackuper, settings_autobackup=settings_temp['autobackup'], local_dir=local_dir)
-            # 回复
-            self.reply(message='Backup task added.', data=autobackuper.show_status())
-
-    def reply(self, code=200, message='Mua!\n', data=''):
-        # 回复
-        self.send_response(200)
-        self.send_header('Content-Type', 'application/json')
-        self.end_headers()
-        data = {
-            "code": code,
-            "message": message,
-            "data": data,
-        }
-        self.wfile.write(json.dumps(data).encode())
-
 class File:
     '表单上传用文件类'
     # 注：with open()语句一定要写在class外面，否则对文件操作符开关过于频繁容易导致报错
@@ -352,31 +152,86 @@ class File:
         else:
             self.current_size += size
 
-        # 计算上传时间
-        new_time = datetime.datetime.now()
-        delta_time = new_time - self.last_time
-        secs = delta_time.total_seconds()
-        if secs <= 0:
-            secs = 1.0
-        self.last_time = new_time
+        # # 计算上传时间
+        # new_time = datetime.datetime.now()
+        # delta_time = new_time - self.last_time
+        # secs = delta_time.total_seconds()
+        # if secs <= 0:
+        #     secs = 1.0
+        # self.last_time = new_time
 
-        # 输出进度并返回
-        print("Read: {:.2f}%".format(
-            self.current_size / self.total_size * 100,
-            #self.current_size / secs / 1024
-        ),
-        end='          \r')
+        # # 输出进度并返回
+        # print("Read: {:.2f}%".format(
+        #     self.current_size / self.total_size * 100,
+        #     #self.current_size / secs / 1024
+        # ),
+        # end='          \r')
         return self.fp.read(size)
 
     def __len__(self):
         '获取文件大小，给http模块调用'
         return self.get_size()
 
-class AutoRecSession(requests.Session):
+class AutoRecSession():
     '本地http通信专用类'
-    def get_alist_token(self, settings_alist:dict):
+    max_retries = 6
+
+    def __init__(self, max_retries:int=6):
+        self.max_retries = max_retries
+
+    @classmethod
+    async def request(self, req_type, **kwargs):
+        '请求'
+        success = False
+        for i in range(self.max_retries):
+            try:
+                logger.debug(f"Trying request {kwargs['url']} ({i+1}/{self.max_retries})")
+                async with ClientSession() as session:
+                    if req_type == "post":
+                        async with session.post(**kwargs) as res:
+                            return await res.json()
+                    elif req_type == "put":
+                        async with session.put(**kwargs) as res:
+                            return await res.json()
+                    elif req_type == "patch":
+                        async with session.patch(**kwargs) as res:
+                            return await res.json()
+                    else:
+                        async with session.get(**kwargs) as res:
+                            return await res.json()
+            except ClientError as e:
+                logger.error(f"Request Error: {e}")
+                await asyncio.sleep(2**i)
+            except Exception:
+                logger.error(f"Unknown Error: {traceback.format_exc()}")
+            else:
+                success = True
+            if success:
+                break
+
+    @classmethod
+    async def get(self, **kwargs):
+        'GET'
+        await self.request(req_type="get", **kwargs)
+
+    @classmethod
+    async def post(self, **kwargs):
+        'POST'
+        await self.request(req_type="post", **kwargs)
+
+    @classmethod
+    async def put(self, **kwargs):
+        'PUT'
+        await self.request(req_type="put", **kwargs)
+
+    @classmethod
+    async def patch(self, **kwargs):
+        'PATCH'
+        await self.request(req_type="patch", **kwargs)
+
+    async def get_alist_token(self, settings_alist:dict):
         '获取alist管理token'
-        url = "http://{}:{}{}".format(settings_alist['host_alist'], settings_alist['port_alist'], '/api/auth/login/hash')
+        url = f"{settings_alist['url']}/api/auth/login/hash"
         params = {
             "username": settings_alist['username'],
             "password": settings_alist['password'].lower()
@@ -386,21 +241,17 @@ class AutoRecSession(requests.Session):
         }
 
         # 请求API
-        data = utils.dict2str(params)
-        response = self.post(url, data=data, headers=headers)
-        response_json = response.json()
+        response_json = await self.get(url=url, data=json.dumps(params), headers=headers)
         # 获取结果
         if response_json['code'] == 200:
-            print("Get token success.")
             return response_json['data']['token']
         else:
-            print("Get token failed,", response_json['message'])
             return ""
     
-    def copy_alist(self, settings_alist:dict, token:str, source_dir:str, filenames:list, dist_dir:str):
+    async def copy_alist(self, settings_alist:dict, token:str, source_dir:str, filenames:list, dist_dir:str):
         '复制文件'
         # 请求参数
-        url = "http://{}:{}{}".format(settings_alist['host_alist'], settings_alist['port_alist'], '/api/fs/copy')
+        url = f"{settings_alist['url']}/api/fs/copy"
         headers = {
             "Authorization": token,
             "Content-Type": "application/json"
@@ -412,21 +263,21 @@ class AutoRecSession(requests.Session):
         }
 
         # 请求API
-        response = self.post(url=url, data=utils.dict2str(data), headers=headers)
+        response = await self.post(url=url, data=utils.dict2str(data), headers=headers)
         data = response.json()
 
         # 获取结果
         if data['code'] == 200:
-            print("Copy success.")
+            logger.info("Copy success.")
         else:
-            print("Copy failed,", data['message'])
+            logger.error("Copy failed,", data['message'])
         
         return data['code']
     
-    def rm_alist(self, settings_alist:dict, token:str, dirname:str, filenames:list):
+    async def rm_alist(self, settings_alist:dict, token:str, dirname:str, filenames:list):
         '删除文件'
         # 请求参数
-        url = "http://{}:{}{}".format(settings_alist['host_alist'], settings_alist['port_alist'], '/api/fs/remove')
+        url = f"{settings_alist['url']}/api/fs/remove"
         headers = {
             "Authorization": token,
             "Content-Type": "application/json"
@@ -437,35 +288,35 @@ class AutoRecSession(requests.Session):
         }
 
         # 请求API
-        response = self.post(url=url, data=utils.dict2str(data), headers=headers)
+        response = await self.post(url=url, data=utils.dict2str(data), headers=headers)
         data = response.json()
 
         # 获取结果
         if data['code'] == 200:
-            print("Remove success:", dirname, filenames)
+            logger.info("Remove success:", dirname, filenames)
         else:
-            print("Remove failed:", dirname, filenames, data['message'])
+            logger.error("Remove failed:", dirname, filenames, data['message'])
         
         return data['code']
 
-    def upload_alist_action(self, settings_alist:dict, token:str, local_filename:str, dest_filename:str):
-        '供multiprocessing使用的流式上传文件，自动重试6次以防上传时网盘抽风'
+    async def upload_alist_action(self, settings_alist:dict, token:str, local_filename:str, dest_filename:str):
+        '供multiprocessing使用的流式上传文件'
         for i in range(6):
             try:
-                self.upload_alist(settings_alist, token, local_filename, dest_filename)
-            except:
-                traceback.print_exc()
+                await self.upload_alist(settings_alist, token, local_filename, dest_filename)
+            except Exception:
+                logger.error(traceback.format_exc())
                 time.sleep(4**i)
         else:
             from requests.exceptions import RequestException
             raise RequestException()
 
-    def upload_alist(self, settings_alist:dict, token:str, filename:str, dest_filename:str):
+    async def upload_alist(self, settings_alist:dict, token:str, filename:str, dest_filename:str):
         '流式上传文件'
         dest_filename = quote(dest_filename) # URL编码
 
         # 请求参数
-        url = "http://{}:{}{}".format(settings_alist['host_alist'], settings_alist['port_alist'], '/api/fs/put')
+        url = f"{settings_alist['url']}/api/fs/put"
         headers = {
             "Authorization": token,
             "File-Path": dest_filename,
@@ -477,72 +328,50 @@ class AutoRecSession(requests.Session):
         with open(filename, 'rb') as f:
             data = File(f, filename)
             # 请求API
-            response = requests.put(url=url, data=data, headers=headers)
-        response_json = response.json()
+            response_json = await self.put(url=url, data=data, headers=headers)
         
         if response_json['code'] == 200:
-            print("\nUpload success:", filename) # 加个\n防止覆盖上传进度条
+            logger.info(f"Upload success: {filename}")
             # 是否在上传后删除文件
             if settings_alist['remove_after_upload']:
                 os.remove(filename)
         else:
-            raise Exception("{} Upload failed: {}".format(filename, response_json))
+            logger.error("{} Upload failed: {}".format(filename, response_json))
 
-    def upload_alist_form(self, settings_alist:dict, token:str, filename: str):
-        '表单上传文件（已废弃）'
-        # 文件名处理
-        filename_split = os.path.split(filename)
-        target_filename = filename_split[1] # 目标文件名
-        target_dir = os.path.split(filename_split[0])[1] # 目标文件夹
-        filepath = "/quark/{}/{}".format(target_dir, target_filename)
-        filepath = quote(filepath) # URL编码
-
-        # 请求参数
-        #token = self.get_alist_token(settings_alist)
-        url = "http://{}:{}{}".format(settings_alist['host_alist'], settings_alist['port_alist'], '/api/fs/form')
-        headers = {
-            "Authorization": token,
-            "File-Path": filepath,
-            "As-Task": "True",
-            "Content-Type": "multipart/form-data",
-            "Content-Length": str(os.path.getsize(filename))
-        }
-        data = File(filename)
-        data = urllib3.encode_multipart_formdata()
-        # 请求API
-        res2 = requests.put(url=url, data=data, headers=headers).json()
-        print(res2)
-
-    def set_blrec(self, data: dict):
+    async def set_blrec(self, data: dict):
         '更改blrec设置'
-        host_blrec = Settings.host_blrec
-        port_blrec = Settings.port_blrec
-        url = "http://{}:{}{}".format(host_blrec, port_blrec, '/api/v1/settings')
+        url = f"{config.blrec['url_blrec']}/api/v1/settings"
         body = utils.dict2str(data)
 
         # 请求API
-        self.patch(url, data=body, timeout=10)
+        await self.patch(url=url, data=body, timeout=20)
     
-    def get_blrec_data(self, room_id=-1, page=1, size=100, select="all"):
+    async def get_blrec_data(self, room_id=-1, page=1, size=100, select="all"):
         '获取blrec信息'
-        host_blrec = Settings.host_blrec
-        port_blrec = Settings.port_blrec
         params = {
             "select": select,
             "size": size,
             "page": page,
             }
         if room_id != -1:
-            url = "http://{}:{}{}".format(host_blrec, port_blrec, '/api/v1/tasks/{}/data'.format(room_id))
+            url = f"{config.blrec['url']}/api/v1/tasks/{room_id}/data"
         else:
-            url = "http://{}:{}{}".format(host_blrec, port_blrec, '/api/v1/tasks/data')
-        response = self.get(url=url, params=params)
-        response_json = response.json()
+            url = f"{config.blrec['url']}/api/v1/tasks/data"
+        response_json = await self.get(url=url, params=params)
 
         return response_json
 
 ## 奇奇怪怪的功能
 class utils:
+    def run_async(coro: Union[Coroutine[Any, Any, T], AsyncioFuture, ConcurrentFuture]):
+        '同步执行异步代码'
+        loop = asyncio.get_event_loop()
+        task = loop.create_task(coro)
+        # task.add_done_callback(lambda x: x.result())
+        loop.run_until_complete(task)
+        loop.close()
+        return task.result()
+
     def get_dest_dir(local_dir: str, remote_dir: str):
         '自动拼接本地文件夹和设置里的远程文件夹名，获取远程文件夹名称'
         last_dir = os.path.split(local_dir)[1]
@@ -589,12 +418,12 @@ class utils:
 
 # functions
 ## 刷新cookies
-def refresh_cookies():
+async def refresh_cookies():
     '刷新cookies'
     import account
-    account.refresh_cookies(True)
+    await account.refresh_cookies(True)
 
-def upload_video(video_filename: str, settings_alist=None, rec_info=None):
+async def upload_video(video_filename: str, settings_alist=None, rec_info=None):
     '上传视频'
     # 判断一下有没有开启自动上传功能
     if not settings_alist['enabled']:
@@ -619,24 +448,22 @@ def upload_video(video_filename: str, settings_alist=None, rec_info=None):
         # [本地文件名, 远程文件名]
         filenames.append([local_filename, dest_filename])
     
-    # session
-    session = AutoRecSession()
-    session.mount('http://', requests.adapters.HTTPAdapter(max_retries=3))
-
     # 获取token
-    token = session.get_alist_token(settings_alist)
+    token = await session.get_alist_token(settings_alist)
 
     # 上传文件
-    pool = multiprocessing.Pool()
+    loop = asyncio.get_event_loop()
+    tasks = []
     for i in filenames:
         local_filename = i[0]
         dest_filename = i[1]
-        pool.apply_async(session.upload_alist_action, args=[settings_alist, token, local_filename, dest_filename])
-    pool.close()
-    pool.join()
+        tasks.append(session.upload_alist(settings_alist, token, local_filename, dest_filename))
+    wait_coro = asyncio.wait(tasks)
+    loop.run_until_complete(wait_coro)
+    loop.close()
 
 
-def add_autobackup(autobackuper:AutoBackuper, settings_autobackup:dict, local_dir:str):
+def add_autobackup(autobackuper:AutoBackuper, settings_autobackup:dict, local_dir:str, now=False):
     '自动备份功能'
     for settings_alist in settings_autobackup['servers']:
         # 判断一下开没开
@@ -649,10 +476,16 @@ def add_autobackup(autobackuper:AutoBackuper, settings_autobackup:dict, local_di
             datetime_now = datetime.datetime.now()
             time_today = datetime_now.strftime(r'%H:%M:%S')
 
-            # 决定要不要第二天再启动
-            if time_today < scheduled_time:
+            # 如果立即上传的话
+            if now:
+                scheduled_time = time_today
+
+            # 决定启动时间
+            if time_today <= scheduled_time:
+                # 如果时间没过预定的点，那就放今天
                 scheduled_date = datetime_now.strftime(r'%y/%m/%d')
             else:
+                # 如果时间已经过了，挪到第二天
                 scheduled_date = (datetime_now + datetime.timedelta(days=1)).strftime(r'%y/%m/%d')
             formatted_time = f"{scheduled_date}T{scheduled_time}"
             t = datetime.datetime.strptime(formatted_time, r"%y/%m/%dT%H:%M:%S")
@@ -663,23 +496,13 @@ def add_autobackup(autobackuper:AutoBackuper, settings_autobackup:dict, local_di
                 local_dir = local_dir, 
                 settings_alist = settings_alist
                 )
-        except Exception:
-            traceback.print_exc()
+        except Exception as e:
+            logger.log(e)
 
-# 加载toml
-Settings.load_settings()
+# 初始化
+static.autobackuper = AutoBackuper()
+static.autobackuper.start_check(config.autobackup)
 
-# main
-if __name__ == "__main__":
-    # 自动备份
-    autobackuper = AutoBackuper()
-    autobackuper.start_check(Settings.settings_autobackup)
+static.session = AutoRecSession(max_retries=config.app['max_retries'])
+logger.debug("Initialized server config.")
 
-    # 监听
-    addr = (Settings.host_server, Settings.port_server)
-    server = HTTPServer(addr, RequestHandler)
-    try:
-        server.serve_forever()
-    except Exception:
-        # 好像没什么用，但总之先留着
-        autobackuper.running = False

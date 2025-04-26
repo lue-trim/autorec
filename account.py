@@ -3,14 +3,15 @@ import os, sys, getopt, time, re, requests, json
 
 import bilibili_api as bili
 #import bilibili_api.login
+from static import logger, config
 
 def usage():
     '--help'
     print("""检查并更新cookies
--l / --login\t扫码登录
--c / --cookies\t检查cookies, 并决定是否刷新
--s / --sync\t将cookies同步到blrec
--f / --forced\t不管cookies有没有过期都强制刷新(optional)""")
+-l / --login \t扫码登录
+-c / --cookies \t检查cookies, 并决定是否刷新
+-s / --sync \t将cookies同步到blrec
+-f / --forced \t不管cookies有没有过期都强制刷新(optional)""")
     quit()
 
 def cookie_dict2str(data:dict):
@@ -45,15 +46,15 @@ def login():
     # 保存并同步
     sync_cookies(credential=credential)
 
-def refresh_cookies(is_forced=False):
+async def refresh_cookies(is_forced=False):
     '刷新cookies'
     # 加载cookies
     credential = load_credential()
     
     # 检查是否需要更新
     if not is_forced:
-        print("Checking cookies...")
-        if bili.sync(credential.check_refresh()):
+        logger.info("Checking cookies...")
+        if await credential.check_refresh():
             print("Cookies expired, refreshing...")
         else:
             ans = input("Cookies not expired, proceed refreshing?(y/N): ")
@@ -61,7 +62,7 @@ def refresh_cookies(is_forced=False):
                 return
     
     # 刷新
-    bili.sync(credential.refresh())
+    await credential.refresh()
 
     # 保存并同步
     sync_cookies(credential=credential)
@@ -76,8 +77,8 @@ def sync_cookies(credential=None):
 
     # 更新blrec的cookies
     new_data = {"header": {"cookie": new_cookies}}
-    session = autorec.AutoRecSession()
-    session.set_blrec(new_data)
+    session = autorec.AutoRecSession(config.app['max_retries'])
+    autorec.utils.run_async(coro=session.set_blrec(new_data))
 
     print(new_cookies)
     print("Cookies sync complete.")
@@ -106,7 +107,7 @@ def main():
     if is_login:
         login()
     if is_refresh_cookies:
-        refresh_cookies(is_forced)
+        bili.sync(refresh_cookies(is_forced))
     if is_sync:
         sync_cookies()
 

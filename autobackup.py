@@ -1,34 +1,43 @@
-import autorec
+# import autorec
+# import aiohttp
+# from autorec import AutoRecSession, utils
+from static import logger, Config
 
 def reload_settings(url):
     '重载autorec配置文件'
     import requests, json
     # 请求参数
+    url = f"{url}/settings/reload"
     headers = {
         "Content-Type": "application/json",
     }
 
     # 请求API
-    response = requests.put(url=url, headers=headers)
+    response = requests.post(url=url, headers=headers)
     # data = response.json()
     print("重载设置成功", sep='\n')
 
-def add_task(url, local_dir, config_file):
+def add_task(url, local_dir, config_file, now=False):
     '添加任务'
     import requests, json
     # 请求参数
+    url = f"{url}/autobackup"
     headers = {
         "Content-Type": "application/json",
     }
     data = {
         "local_dir": local_dir,
-        "config_toml": config_file
+        "config_toml": config_file,
+        "now": now,
     }
 
     # 请求API
-    response = requests.post(url=url, data=json.dumps(data), headers=headers)
+    # utils.run_async(AutoRecSession.post(url=url, params=data, headers=headers))
+    response = requests.post(url=url, params=data, headers=headers)
     data = response.json()
-    print("添加成功", data['data'], sep='\n')
+    logger.info("Autobackup task created.")
+    logger.info(data)
+    print(data['data'])
 
 def del_retry_task(url, index=-1, retry=False, is_clear_all=False):
     '删除或重试任务'
@@ -44,16 +53,18 @@ def del_retry_task(url, index=-1, retry=False, is_clear_all=False):
 
     # 请求API
     if retry:
-        response = requests.patch(url=url, data=json.dumps(data), headers=headers)
+        response = requests.post(url=f"{url}/autobackup/retry", params=data, headers=headers)
     else:
-        response = requests.delete(url=url, data=json.dumps(data), headers=headers)
+        response = requests.delete(url=f"{url}/autobackup", params=data, headers=headers)
     data = response.json()
-    print("提交成功", data['data'], sep='\n')
+    logger.log("Autobackup task modified.")
+    print(data['data'])
 
 def show_task(url):
     '列出任务'
     import requests, json
     # 请求参数
+    url = f"{url}/autobackup"
     headers = {
         "Content-Type": "application/json",
     }
@@ -62,36 +73,38 @@ def show_task(url):
     }
 
     # 请求API
-    response = requests.get(url=url, data=json.dumps(data), headers=headers)
+    response = requests.get(url=url, params=data, headers=headers)
     data = response.json()
     print(data['data'], sep='\n')
 
 def usage():
     '--help'
     print("""定时备份任务管理
--r/--reload \t重载全局autorec配置
+--reload \t重载全局autorec配置
+-u/--upload <pathname> \t立即手动上传任务
 -s/--show \t查看任务列表
--a/--add \t新增任务
--t/--retry \t手动重试备份失败的任务
--d/--delete \t删除任务
--p/--path <pathname> \t要备份的目录，新增任务必填
--c/--config <config_file> \t备份使用的服务器配置，新增任务必填，默认值settings.toml
--i/--id <id> 或 --all\t要选中的任务ID，删除/重试任务必填
+-a/--add <pathname> \t新增任务, 并在<pathname>处指定目录位置
+-t/--retry <task-id/all> \t手动重试备份失败的任务, 输入值可以是任务id, 也可以是"all"
+-d/--delete <task-id/all> \t删除任务
+-c/--config <config_file> \t指定临时载入使用的服务器配置, 默认值settings.toml
+
 e.g.:
-python autobackup.py --add -c settings.toml -p /home/123
-python autobackup.py --reload
-python autobackup.py --del --all
-python autobackup.py --retry -i 0
+指定配置文件并添加定时上传任务: python autobackup.py --add /home/123 -c settings2.toml
+使用默认配置, 立即上传: \tpython autobackup.py --upload /home/123
+让服务端重新载入配置文件: \tpython autobackup.py --reload -c settings.toml
+删除ID=2的定时任务: \tpython autobackup.py --delete 2
+重试所有失败的任务(已经完成的不会计入): \tpython autobackup.py --retry all
 """)
     quit()
 
 def main():
     import getopt, os, sys, toml
     # 初始化
-    local_dir = ""
     config_file = "settings.toml"
-    index = -1
-    is_all = False
+    add_dir = ""
+    upload_dir = ""
+    del_id = -1
+    retry_id = -1
     is_show = False
     is_add = False
     is_delete = False
@@ -101,59 +114,63 @@ def main():
     # 解析参数
     options, args = getopt.getopt(
         sys.argv[1:], 
-        "hp:c:i:sadrt", 
-        ["help", "path=", "config=", "index=", "all", "show", "add", "delete", "reload", "retry"]
+        "hc:sa:d:r:u:", 
+        ["help", "config=", "show", "add=", "delete=", "reload", "retry=", "upload="]
         )
     for name, value in options:
         if name in ("-h","--help"):
             usage()
-        # 参数
-        elif name in ("-p","--path"):
-            local_dir = value
         elif name in ("-c","--config"):
             config_file = value
-        elif name in ("-i","--index"):
-            index = int(value)
-        elif name in ("--all"):
-            is_all = True
-        # 功能
         elif name in ("-a","--add"):
-            is_add = True
+            add_dir = value
         elif name in ("-s","--show"):
             is_show = True
         elif name in ("-d","--delete"):
             is_delete = True
-        elif name in ("-r","--reload"):
+            if value.lower() == "all":
+                del_id = -1
+            else:
+                del_id = int(value)
+        elif name == "--reload":
             is_reload = True
         elif name in ("-t","--retry"):
             is_retry = True
+            if value.lower() == "all":
+                retry_id = -1
+            else:
+                retry_id = int(value)
+        elif name in ("--upload", '-u'):
+            upload_dir = value
 
-    # 检查参数
-    if is_add and (config_file == "" or local_dir == ""):
-        print("添加配置任务请指定配置文件和目录")
-        usage()
-    if (is_delete or is_retry) and (index == "" and not is_all):
-        print("请使用-i指定要删除的任务id或使用--all清空列表")
-        is_delete = False
-        is_show = True
-
-    # 请求地址    
-    with open("settings.toml", 'r', encoding='utf-8') as f:
-        settings = toml.load(f)
-    url = "http://{}:{}/autobackup".format(
-        settings['server']['host_server'], 
-        settings['server']['port_server'],
-        )
+    # 检查相容性
+    # 请求地址
+    config = Config(config_file)
+    url = f"http://{config.app['host_server']}:{config.app['port_server']}"
 
     # 切换模式
     if is_reload:
         reload_settings(url)
     if is_show:
         show_task(url)
-    elif is_add:
-        add_task(url, config_file=config_file, local_dir=local_dir)
-    elif is_delete or is_retry:
-        del_retry_task(url, index, is_clear_all=is_all, retry=is_retry)
+    if add_dir:
+        add_task(url, config_file=config_file, local_dir=add_dir)
+    if is_delete:
+        del_retry_task(
+            url, 
+            del_id, 
+            is_clear_all=del_id == -1, 
+            retry=False
+        )
+    if is_retry:
+        del_retry_task(
+            url, 
+            retry_id, 
+            is_clear_all=retry_id == -1, 
+            retry=True
+        )
+    if upload_dir:
+        add_task(url, config_file=config_file, local_dir=upload_dir, now=True)
 
 if __name__ == "__main__":
     main()
