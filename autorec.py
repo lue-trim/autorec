@@ -193,10 +193,12 @@ class AutoRecSession():
                             response = await res.json()
                             # logger.debug(response)
                     elif req_type == "put":
-                        with open(kwargs['filename'], 'rb') as f:
-                            del kwargs['filename']
-                            kwargs.update({'data': f})
-                            async with session.put(**kwargs) as res:
+                        # logger.debug(kwargs)
+                        new_kwargs = kwargs.copy()
+                        with open(new_kwargs['filename'], 'rb') as f:
+                            del new_kwargs['filename']
+                            new_kwargs.update({'data': f})
+                            async with session.put(**new_kwargs) as res:
                                 response = await res.json()
                     elif req_type == "patch":
                         async with session.patch(**kwargs) as res:
