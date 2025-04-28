@@ -6,6 +6,7 @@ import asyncio
 from aiohttp import ClientSession, ClientError
 from typing import Any, TypeVar, Coroutine, Union
 from asyncio.futures import Future as AsyncioFuture
+from asyncio.exceptions import TimeoutError
 from concurrent.futures import Future as ConcurrentFuture
 T = TypeVar("T")
 
@@ -188,11 +189,7 @@ class AutoRecSession():
             try:
                 logger.debug(f"Trying request {kwargs['url']} ({i+1}/{self.max_retries})")
                 async with ClientSession() as session:
-                    if req_type == "post":
-                        async with session.post(**kwargs) as res:
-                            response = await res.json()
-                            # logger.debug(response)
-                    elif req_type == "put":
+                    if req_type == "put":
                         # logger.debug(kwargs)
                         new_kwargs = kwargs.copy()
                         with open(new_kwargs['filename'], 'rb') as f:
@@ -200,11 +197,8 @@ class AutoRecSession():
                             new_kwargs.update({'data': f})
                             async with session.put(**new_kwargs) as res:
                                 response = await res.json()
-                    elif req_type == "patch":
-                        async with session.patch(**kwargs) as res:
-                            response = await res.json()
                     else:
-                        async with session.get(**kwargs) as res:
+                        async with session.request(method=req_type, **kwargs) as res:
                             # response = await res.text()
                             # logger.debug(response)
                             # return
@@ -212,10 +206,13 @@ class AutoRecSession():
             except ClientError as e:
                 logger.error(f"Request Error: {e}")
                 await asyncio.sleep(4**i)
+            except TimeoutError:
+                logger.error("Request time out, retrying...")
             except Exception:
                 logger.error(f"Unknown Error: {traceback.format_exc()}")
             else:
                 # return json.loads(response)
+                logger.debug(response)
                 return response
 
     @classmethod
@@ -350,10 +347,11 @@ class AutoRecSession():
     async def set_blrec(self, data: dict):
         '更改blrec设置'
         url = f"{config.blrec['url_blrec']}/api/v1/settings"
-        body = utils.dict2str(data)
+        # body = utils.dict2str(data)
+        body = data
 
         # 请求API
-        await self.patch(url=url, data=body, timeout=20)
+        await self.patch(url=url, json=body, timeout=20)
     
     async def get_blrec_data(self, room_id=-1, page=1, size=100, select="all"):
         '获取blrec信息'

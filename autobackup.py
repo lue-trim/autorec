@@ -57,7 +57,7 @@ def del_retry_task(url, index=-1, retry=False, is_clear_all=False):
     else:
         response = requests.delete(url=f"{url}/autobackup", params=data, headers=headers)
     data = response.json()
-    logger.log("Autobackup task modified.")
+    logger.info("Autobackup task modified.")
     print(data['data'])
 
 def show_task(url):

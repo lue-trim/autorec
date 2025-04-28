@@ -3,15 +3,20 @@ import os, sys, getopt, time, re, requests, json
 
 import bilibili_api as bili
 #import bilibili_api.login
+from bilibili_api import login_v2, request_settings
+from bilibili_api.login_v2 import QrCodeLoginEvents
 from static import logger, config
 
 def usage():
     '--help'
-    print("""检查并更新cookies
+    print("""
+检查并更新cookies
 -l / --login \t扫码登录
+    -t / --tv \t使用TV端扫码登录(不指定的话默认使用Web端)
 -c / --cookies \t检查cookies, 并决定是否刷新
+    -f / --forced \t不管cookies有没有过期都强制刷新(optional)
 -s / --sync \t将cookies同步到blrec
--f / --forced \t不管cookies有没有过期都强制刷新(optional)""")
+""")
     quit()
 
 def cookie_dict2str(data:dict):
@@ -34,9 +39,20 @@ def dump_credential(credential:bili.Credential):
     with open("credential.json", 'w') as f:
         json.dump(credential_dict, f)
 
-def login():
+def login(is_tv=False):
     '登录账号'
-    credential = bili.login.login_with_qrcode_term()
+    if is_tv:
+        qr = login_v2.QrCodeLogin(platform=login_v2.QrCodeLoginChannel.TV)
+    else:
+        qr = login_v2.QrCodeLogin(platform=login_v2.QrCodeLoginChannel.WEB) # 生成二维码登录实例，平台选择网页端
+    bili.sync(qr.generate_qrcode())                                          # 生成二维码
+    while not qr.has_done():
+        print(qr.get_qrcode_terminal())                                     # 生成终端二维码文本，打印
+        while bili.sync(qr.check_state()) != QrCodeLoginEvents.TIMEOUT:                                            # 在完成扫描前轮询
+            # print(bili.sync(qr.check_state()))                                   # 检查状态
+            time.sleep(2)                                                   # 轮询间隔建议 >=1s
+    credential = qr.get_credential()
+    #credential = bili.login.login_with_qrcode_term()
     if not bili.sync(credential.check_valid()):
         ans = input("\nWarning: this account maybe invalid, continue?(y/N)")
         if ans.lower() != 'y':
@@ -78,20 +94,23 @@ def sync_cookies(credential=None):
     # 更新blrec的cookies
     new_data = {"header": {"cookie": new_cookies}}
     session = autorec.AutoRecSession(config.app['max_retries'])
-    autorec.utils.run_async(coro=session.set_blrec(new_data))
+    bili.sync(session.set_blrec(new_data))
 
     print(new_cookies)
     print("Cookies sync complete.")
 
 def main():
     # 初始化
+    #request_settings.set_enable_bili_ticket(True)
+    request_settings.set_enable_auto_buvid(True)
     is_forced = False
     is_refresh_cookies = False
     is_login = False
     is_sync = False
+    is_tv = False
 
     # 解析参数
-    options, args = getopt.getopt(sys.argv[1:], "hfcls", ["help", "force", "cookies", "login", "sync"])
+    options, args = getopt.getopt(sys.argv[1:], "hfclst", ["help", "force", "cookies", "login", "sync", "tv"])
     for name, value in options:
         if name in ("-f","--forced"):
             is_forced = True
@@ -103,9 +122,11 @@ def main():
             is_refresh_cookies = True
         if name in ("-s","--sync"):
             is_sync = True
+        if name in ("-t","--tv"):
+            is_tv = True
 
     if is_login:
-        login()
+        login(is_tv)
     if is_refresh_cookies:
         bili.sync(refresh_cookies(is_forced))
     if is_sync:
