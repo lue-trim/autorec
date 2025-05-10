@@ -114,7 +114,7 @@ def main():
     # 解析参数
     options, args = getopt.getopt(
         sys.argv[1:], 
-        "hc:sa:d:r:u:", 
+        "hc:sa:d:t:u:", 
         ["help", "config=", "show", "add=", "delete=", "reload", "retry=", "upload="]
         )
     for name, value in options:

@@ -3,7 +3,7 @@ import asyncio
 # import http.cookiejar, requests.utils
 # import urllib3
 
-from aiohttp import ClientSession, ClientError
+from aiohttp import ClientSession, ClientError, ClientTimeout
 from typing import Any, TypeVar, Coroutine, Union
 from asyncio.futures import Future as AsyncioFuture
 from asyncio.exceptions import TimeoutError
@@ -188,7 +188,7 @@ class AutoRecSession():
         for i in range(self.max_retries):
             try:
                 logger.debug(f"Trying request {kwargs['url']} ({i+1}/{self.max_retries})")
-                async with ClientSession() as session:
+                async with ClientSession(timeout=ClientTimeout(total=None)) as session:
                     if req_type == "put":
                         # logger.debug(kwargs)
                         new_kwargs = kwargs.copy()
@@ -205,7 +205,6 @@ class AutoRecSession():
                             response = await res.json()
             except ClientError as e:
                 logger.error(f"Request Error: {e}")
-                await asyncio.sleep(4**i)
             except TimeoutError:
                 logger.error("Request time out, retrying...")
             except Exception:
@@ -214,6 +213,7 @@ class AutoRecSession():
                 # return json.loads(response)
                 logger.debug(response)
                 return response
+            await asyncio.sleep(4**i)
 
     @classmethod
     async def get(self, **kwargs):
