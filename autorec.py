@@ -186,8 +186,10 @@ class AutoRecSession():
     async def request(self, req_type, **kwargs):
         '发送请求'
         for i in range(self.max_retries):
+            sleep_sec = min(4**(i-1), 600)
+            logger.info(f"({i+1}/{self.max_retries}) Requesting after {sleep_sec} seconds: {kwargs['url']}")
+            await asyncio.sleep(sleep_sec)
             try:
-                logger.debug(f"Trying request {kwargs['url']} ({i+1}/{self.max_retries})")
                 async with ClientSession(timeout=ClientTimeout(total=None)) as session:
                     if req_type == "put":
                         # logger.debug(kwargs)
@@ -204,16 +206,20 @@ class AutoRecSession():
                             # return
                             response = await res.json()
             except ClientError as e:
-                logger.error(f"Request Error: {e}")
+                logger.warning(f"Request Error, retrying: {e}")
             except TimeoutError:
-                logger.error("Request time out, retrying...")
+                logger.warning("Request time out, retrying...")
             except Exception:
-                logger.error(f"Unknown Error: {traceback.format_exc()}")
+                logger.warning(f"Unknown Error, retrying: {traceback.format_exc()}")
             else:
                 # return json.loads(response)
-                logger.debug(response)
-                return response
-            await asyncio.sleep(4**i)
+                # logger.debug(response)
+                if response.get("code", "") == 200:
+                    return response
+                else:
+                    logger.warning(f"Response Error, retrying: {response}")
+        else:
+            logger.error("All requests failed.")
 
     @classmethod
     async def get(self, **kwargs):
