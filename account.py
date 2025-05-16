@@ -69,7 +69,7 @@ async def refresh_cookies(is_forced=False):
     
     # 检查是否需要更新
     if not is_forced:
-        logger.info("Checking cookies...")
+        print("Checking cookies...")
         if await credential.check_refresh():
             print("Cookies expired, refreshing...")
         else:

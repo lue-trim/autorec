@@ -195,7 +195,7 @@ class AutoRecSession():
                         # logger.debug(kwargs)
                         new_kwargs = kwargs.copy()
                         with open(new_kwargs['filename'], 'rb') as f:
-                            del new_kwargs['filename']
+                            new_kwargs.pop('filename')
                             new_kwargs.update({'data': f})
                             async with session.put(**new_kwargs) as res:
                                 response = await res.json()
@@ -205,6 +205,9 @@ class AutoRecSession():
                             # logger.debug(response)
                             # return
                             response = await res.json()
+                            assert res.ok
+            except AssertionError:
+                logger.warning(f"Response Error: {response}, retrying...")
             except ClientError as e:
                 logger.warning(f"Request Error, retrying: {e}")
             except TimeoutError:
@@ -357,7 +360,8 @@ class AutoRecSession():
         body = data
 
         # 请求API
-        await self.patch(url=url, json=body, timeout=20)
+        resp = await self.patch(url=url, json=body, timeout=20)
+        assert resp
     
     async def get_blrec_data(self, room_id=-1, page=1, size=100, select="all"):
         '获取blrec信息'
