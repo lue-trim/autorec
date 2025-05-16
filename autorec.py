@@ -214,7 +214,7 @@ class AutoRecSession():
             else:
                 # return json.loads(response)
                 # logger.debug(response)
-                if response.get("code", "") == 200:
+                if response.get("code", 200) == 200:
                     return response
                 else:
                     logger.warning(f"Response Error, retrying: {response}")
