@@ -6,10 +6,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from uuid import UUID
 
+from contextlib import asynccontextmanager
+
 from autorec import add_autobackup, upload_video, refresh_cookies
 # autorec模块的导入必须放前面
 import static
 from static import config, autobackuper, session, Config
+
+import cookies_checker
 
 class BlrecWebhookData(BaseModel):
     'BLREC Webhook的数据格式'
@@ -19,7 +23,17 @@ class BlrecWebhookData(BaseModel):
     data: dict
 
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(_app):
+    '生命周期管理'
+    config.load()
+    cookies_scheduler = await cookies_checker.init()
+
+    yield
+
+    cookies_scheduler.shutdown()
+
+app = FastAPI(lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -91,9 +105,9 @@ async def retry_backup_task(id:int=-1, all:bool=False):
 
 
 ### 手动上传接口
-@app.post('/upload')
-async def manual_upload(path: str):
-    '手动上传到指定位置'
+# @app.post('/upload')
+# async def manual_upload(path: str):
+#     '手动上传到指定位置'
 
 
 ### BLREC Webhook

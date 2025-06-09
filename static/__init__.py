@@ -8,6 +8,7 @@ class Config:
     __alist:dict
     __blrec:dict
     __autobackup:dict
+    __cookies:dict
 
     def __init__(self, config_path="settings.toml"):
         self.load(config_path)
@@ -16,7 +17,12 @@ class Config:
     def app(self):
         'api设置'
         return self.__app
-    
+
+    @property
+    def cookies(self):
+        'cookies设置'
+        return self.__cookies
+
     @property
     def autobackup(self):
         '自动备份设置'
@@ -53,6 +59,9 @@ remote_dir = '/quark/2024_下/{time/%y%m%d}_{room_info/title}'
 # (Refer to README.md)
 remove_after_upload = false # optional, whether delete local file after upload, false by default
 
+[cookies]
+check_interval = 43200 # in seconds
+
 [autobackup]
 # Settings for auto backup
 timer_interval = 60 # optional, seconds of upload timer interval
@@ -87,11 +96,12 @@ level = "INFO"
         logger.info(f"Loading config {config_path}...")
         with open(config_path, 'r', encoding='utf-8') as f:
             config_file = toml.load(f)
-            self.__app = config_file['server']
-            self.__autobackup = config_file['autobackup']
-            self.__blrec = config_file['blrec']
-            self.__alist = config_file['alist']
-            self.__log = config_file['log']
+            self.__app = config_file.get('server', {})
+            self.__autobackup = config_file.get('autobackup', {})
+            self.__cookies = config_file.get('cookies', {})
+            self.__blrec = config_file.get('blrec', {})
+            self.__alist = config_file.get('alist', {})
+            self.__log = config_file.get('log', {})
 
         # 设置默认值
         self.__app.setdefault('max_retries', 6)
@@ -107,6 +117,8 @@ level = "INFO"
         for i in self.__autobackup['servers']:
             i.setdefault('remove_after_upload', False)
             i.setdefault('enabled', True)
+        
+        self.__cookies.setdefault('check_interval', 43200)
 
 
 # 初始化配置

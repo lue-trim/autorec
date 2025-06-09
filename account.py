@@ -1,12 +1,7 @@
-import autorec
-import os, sys, getopt, time, traceback, json
+import os, sys, getopt, asyncio
 
-import bilibili_api as bili
+from cookies_checker.utils import login, refresh_cookies, sync_cookies
 #import bilibili_api.login
-from bilibili_api import login_v2, request_settings
-from bilibili_api.login_v2 import QrCodeLoginEvents
-from bilibili_api.utils.network import get_buvid, get_bili_ticket
-from static import logger, config
 
 def usage():
     '--help'
@@ -20,104 +15,6 @@ def usage():
 """)
     quit()
 
-def cookie_dict2str(data:dict):
-    'cookie_dict转换为字符串'
-    s = ''
-    for i in data.keys():
-        s += "{}={};".format(i, data[i])
-    return s
-
-def load_credential():
-    '从json导入credential'
-    with open("credential.json", 'r') as f:
-        credential_dict =json.load(f)
-    credential = bili.Credential.from_cookies(credential_dict)
-    return credential
-
-def dump_credential(credential:bili.Credential):
-    '导出credential到json'
-    credential_dict = credential.get_cookies()
-    with open("credential.json", 'w') as f:
-        json.dump(credential_dict, f)
-
-async def login(is_tv=False):
-    '登录账号'
-    if is_tv:
-        qr = login_v2.QrCodeLogin(platform=login_v2.QrCodeLoginChannel.TV)
-    else:
-        qr = login_v2.QrCodeLogin(platform=login_v2.QrCodeLoginChannel.WEB) # 生成二维码登录实例，平台选择网页端
-    await qr.generate_qrcode()                                          # 生成二维码
-    while not qr.has_done():
-        print(qr.get_qrcode_terminal())                                     # 生成终端二维码文本，打印
-        while (await qr.check_state()) != QrCodeLoginEvents.TIMEOUT:                                            # 在完成扫描前轮询
-            # print(bili.sync(qr.check_state()))                                   # 检查状态
-            time.sleep(2)                                                   # 轮询间隔建议 >=1s
-    credential = qr.get_credential()
-    #credential = bili.login.login_with_qrcode_term()
-    if not (await credential.check_valid()):
-        ans = input("\nWarning: this account maybe invalid, continue?(y/N)")
-        if ans.lower() != 'y':
-            return
-    print("Login complete, syncing to blrec...")
-
-    # 保存并同步
-    await sync_cookies(credential=credential)
-
-async def refresh_cookies(is_forced=False):
-    '刷新cookies'
-    # 加载cookies
-    credential = load_credential()
-    
-    # 检查是否需要更新
-    if not is_forced:
-        print("Checking cookies...")
-        if (await credential.check_refresh()) or not (await credential.check_valid()):
-            print("Cookies expired, refreshing...")
-        else:
-            ans = input("Cookies not expired, proceed refreshing?(y/N): ")
-            if ans.lower() != 'y':
-                return
-    
-    # 刷新
-    await credential.refresh()
-
-    # 保存并同步
-    await sync_cookies(credential=credential)
-
-async def sync_cookies(credential:bili.Credential=None):
-    '保存cookies并同步到blrec'
-    if not credential:
-        credential = load_credential()
-    else:
-        if not credential.has_buvid3() or not credential.has_buvid4():
-            credential.buvid3, credential.buvid4 = await get_buvid()
-        dump_credential(credential)
-    credential_dict = credential.get_cookies()
-    bili_tickets = await try_bili_ticket(credential)
-    if bili_tickets:
-        credential_dict.update(bili_tickets)
-    new_cookies = cookie_dict2str(credential_dict)[:-1] # 去除最后的分号
-
-    # 更新blrec的cookies
-    new_data = {"header": {"cookie": new_cookies}}
-    session = autorec.AutoRecSession(config.app['max_retries'])
-    await session.set_blrec(new_data)
-
-    print(new_cookies)
-    print("Cookies sync complete.")
-
-async def try_bili_ticket(credential:bili.Credential):
-    '尝试获取bili_ticket'
-    try:
-        bili_ticket, bili_ticket_expires = await get_bili_ticket(credential)
-    except Exception:
-        logger.warning(traceback.format_exc())
-        return {}
-    else:
-        return {
-            'bili_ticket': bili_ticket, 
-            'bili_ticket_expires': bili_ticket_expires
-            }
 
 def main():
     # 初始化
@@ -146,11 +43,11 @@ def main():
             is_tv = True
 
     if is_login:
-        bili.sync(login(is_tv))
+        asyncio.run(login(is_tv))
     if is_refresh_cookies:
-        bili.sync(refresh_cookies(is_forced))
+        asyncio.run(refresh_cookies(is_forced))
     if is_sync:
-        bili.sync(sync_cookies())
+        asyncio.run(sync_cookies())
 
 if __name__ == "__main__":
     main()
