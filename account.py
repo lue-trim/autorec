@@ -71,7 +71,7 @@ async def refresh_cookies(is_forced=False):
     # 检查是否需要更新
     if not is_forced:
         print("Checking cookies...")
-        if await credential.check_refresh():
+        if (await credential.check_refresh()) or not (await credential.check_valid()):
             print("Cookies expired, refreshing...")
         else:
             ans = input("Cookies not expired, proceed refreshing?(y/N): ")
