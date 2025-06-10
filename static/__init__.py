@@ -1,6 +1,212 @@
-import sys, toml
-from requests.adapters import HTTPAdapter
+import sys, toml, asyncio, traceback, json, os
+# from requests.adapters import HTTPAdapter
 from loguru import logger
+
+from aiohttp import ClientSession, ClientError, ClientTimeout
+from urllib.parse import quote
+
+class AutoRecSession():
+    '本地http通信专用类'
+    max_retries = 6
+
+    def __init__(self, max_retries:int=6):
+        self.max_retries = max_retries
+
+    @classmethod
+    async def request(self, req_type, **kwargs):
+        '发送请求'
+        for i in range(self.max_retries):
+            sleep_sec = min(4**(i-1), 600)
+            logger.info(f"({i+1}/{self.max_retries}) Requesting after {sleep_sec} seconds: {kwargs['url']}")
+            await asyncio.sleep(sleep_sec)
+            try:
+                async with ClientSession(timeout=ClientTimeout(total=None)) as session:
+                    if req_type == "put":
+                        # logger.debug(kwargs)
+                        new_kwargs = kwargs.copy()
+                        with open(new_kwargs['filename'], 'rb') as f:
+                            new_kwargs.pop('filename')
+                            new_kwargs.update({'data': f})
+                            async with session.put(**new_kwargs) as res:
+                                response = await res.json()
+                    else:
+                        async with session.request(method=req_type, **kwargs) as res:
+                            # response = await res.text()
+                            # logger.debug(response)
+                            # return
+                            response = await res.json()
+                            assert res.ok
+            except AssertionError:
+                logger.warning(f"Response Error: {response}, retrying...")
+            except ClientError as e:
+                logger.warning(f"Request Error, retrying: {e}")
+            except TimeoutError:
+                logger.warning("Request time out, retrying...")
+            except Exception:
+                logger.warning(f"Unknown Error, retrying: {traceback.format_exc()}")
+            else:
+                # return json.loads(response)
+                # logger.debug(response)
+                if response.get("code", 200) == 200:
+                    return response
+                else:
+                    logger.warning(f"Response Error, retrying: {response}")
+        else:
+            logger.error("All requests failed.")
+
+    @classmethod
+    async def get(self, **kwargs):
+        'GET'
+        return await self.request(req_type="get", **kwargs)
+
+    @classmethod
+    async def post(self, **kwargs):
+        'POST'
+        return await self.request(req_type="post", **kwargs)
+
+    @classmethod
+    async def put(self, filename, **kwargs):
+        'PUT'
+        return await self.request(req_type="put", filename=filename, **kwargs)
+
+    @classmethod
+    async def patch(self, **kwargs):
+        'PATCH'
+        return await self.request(req_type="patch", **kwargs)
+
+    async def get_alist_token(self, settings_alist:dict):
+        '获取alist管理token'
+        url = f"{settings_alist['url_alist']}/api/auth/login/hash"
+        params = {
+            "username": settings_alist['username'],
+            "password": settings_alist['password'].lower()
+        }
+        headers = {
+            'Content-Type': 'application/json'
+        }
+
+        # 请求API
+        response_json = await self.post(url=url, data=json.dumps(params), headers=headers)
+        # 获取结果
+        if response_json['code'] == 200:
+            return response_json['data']['token']
+        else:
+            return ""
+    
+    async def copy_alist(self, settings_alist:dict, token:str, source_dir:str, filenames:list, dist_dir:str):
+        '复制文件'
+        # 请求参数
+        url = f"{settings_alist['url_alist']}/api/fs/copy"
+        headers = {
+            "Authorization": token,
+            "Content-Type": "application/json"
+        }
+        data = {
+            "src_dir": source_dir,
+            "dst_dir": dist_dir,
+            "names": filenames
+        }
+
+        # 请求API
+        data = await self.post(url=url, data=json.dumps(data), headers=headers)
+
+        # 获取结果
+        if data['code'] == 200:
+            logger.info("Copy success.")
+        else:
+            logger.error("Copy failed,", data['message'])
+        
+        return data['code']
+    
+    async def rm_alist(self, settings_alist:dict, token:str, dirname:str, filenames:list):
+        '删除文件'
+        # 请求参数
+        url = f"{settings_alist['url_alist']}/api/fs/remove"
+        headers = {
+            "Authorization": token,
+            "Content-Type": "application/json"
+        }
+        data = {
+            "dir": dirname,
+            "names": filenames
+        }
+
+        # 请求API
+        data = await self.post(url=url, data=json.dumps(data), headers=headers)
+
+        # 获取结果
+        if data['code'] == 200:
+            logger.info("Remove success:", dirname, filenames)
+        else:
+            logger.error("Remove failed:", dirname, filenames, data['message'])
+        
+        return data['code']
+
+    async def upload_alist_action(self, settings_alist:dict, token:str, local_filename:str, dest_filename:str):
+        '供multiprocessing使用的流式上传文件'
+        for i in range(6):
+            try:
+                await self.upload_alist(settings_alist, token, local_filename, dest_filename)
+            except Exception:
+                logger.error(traceback.format_exc())
+                await asyncio.sleep(4**i)
+        else:
+            from requests.exceptions import RequestException
+            raise RequestException()
+
+    async def upload_alist(self, settings_alist:dict, token:str, filename:str, dest_filename:str):
+        '流式上传文件'
+        dest_filename = quote(dest_filename) # URL编码
+
+        # 请求参数
+        url = f"{settings_alist['url_alist']}/api/fs/put"
+        headers = {
+            "Authorization": token,
+            "File-Path": dest_filename,
+            "As-Task": "True",
+            "Content-Type": "application/octet-stream",
+        }
+
+        # 打开文件
+        response_json = await self.put(url=url, filename=filename, headers=headers)
+        # with open(filename, 'rb') as f:
+        #     # data = File(f, filename) # aiohttp的put没有requests库那种奇怪的bug, 不用自定义File类
+        #     data = f
+        #     # 请求API
+        #     response_json = await self.put(url=url, data=data, headers=headers)
+        
+        if response_json['code'] == 200:
+            logger.info(f"Upload success: {filename}")
+            # 是否在上传后删除文件
+            if settings_alist['remove_after_upload']:
+                os.remove(filename)
+        else:
+            logger.error("{} Upload failed: {}".format(filename, response_json))
+
+    async def set_blrec(self, data: dict):
+        '更改blrec设置'
+        url = f"{config.blrec['url_blrec']}/api/v1/settings"
+        # body = utils.json.dumps(data)
+        body = data
+
+        # 请求API
+        resp = await self.patch(url=url, json=body, timeout=20)
+        assert resp
+    
+    async def get_blrec_data(self, room_id=-1, page=1, size=100, select="all"):
+        '获取blrec信息'
+        params = {
+            "select": select,
+            "size": size,
+            "page": page,
+            }
+        if room_id != -1:
+            url = f"{config.blrec['url_blrec']}/api/v1/tasks/{room_id}/data"
+        else:
+            url = f"{config.blrec['url_blrec']}/api/v1/tasks/data"
+        response_json = await self.get(url=url, params=params)
+
+        return response_json
 
 class Config:
     __app:dict
@@ -60,11 +266,11 @@ remote_dir = '/quark/2024_下/{time/%y%m%d}_{room_info/title}'
 remove_after_upload = false # optional, whether delete local file after upload, false by default
 
 [cookies]
-check_interval = 43200 # in seconds
+check_interval = 43200 # optional, in seconds
 
 [autobackup]
 # Settings for auto backup
-timer_interval = 60 # optional, seconds of upload timer interval
+check_interval = 60 # optional, in seconds
 [[autobackup.servers]]
 # Support multiple remote configs, the same format as 'alist' part above
 # For example, when remote_dir is set to /xxx, then it seems like:
@@ -123,12 +329,14 @@ level = "INFO"
 
 # 初始化配置
 config = Config()
+config.load()
 
 # 初始化自动备份服务器
-autobackuper = None
+backup_job_list = []
 
 # 初始化alist连接会话
-session = None
+# session = None
+session = AutoRecSession(max_retries=config.app['max_retries'])
 
 # 初始化日志
 log_file = config.log['file']
@@ -136,5 +344,6 @@ level = config.log['level']
 logger.remove()
 if log_file:
     logger.add(log_file, enqueue=True, level=level)
+    logger.add(sys.stdout, enqueue=True, level="INFO")
 else:
     logger.add(sys.stdout, enqueue=True, level=level)

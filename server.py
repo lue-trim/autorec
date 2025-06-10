@@ -8,12 +8,17 @@ from uuid import UUID
 
 from contextlib import asynccontextmanager
 
-from autorec import add_autobackup, upload_video, refresh_cookies
-# autorec模块的导入必须放前面
 import static
-from static import config, autobackuper, session, Config
+from static import config, session, Config, backup_job_list
 
 import cookies_checker
+from cookies_checker.utils import refresh_cookies
+
+import autobackup
+from autobackup.utils import show_status, change_status, del_task
+
+from api import upload_video, add_autobackup
+
 
 class BlrecWebhookData(BaseModel):
     'BLREC Webhook的数据格式'
@@ -26,12 +31,14 @@ class BlrecWebhookData(BaseModel):
 @asynccontextmanager
 async def lifespan(_app):
     '生命周期管理'
-    config.load()
+    # config.load()
     cookies_scheduler = await cookies_checker.init()
+    autobackup_scheduler = await autobackup.init()
 
     yield
 
     cookies_scheduler.shutdown()
+    autobackup_scheduler.shutdown()
 
 app = FastAPI(lifespan=lifespan)
 app.add_middleware(
@@ -54,7 +61,7 @@ async def reload_settings(filename:str="settings.toml"):
 @app.get('/autobackup')
 async def get_backup_status():
     '获取自动备份工作状态'
-    data = autobackuper.show_status()
+    data = show_status()
     return  {
         "code": 200,
         "data": data
@@ -67,13 +74,13 @@ async def add_backup_task(local_dir:str, config_toml:str, now:bool=False):
     settings_temp = Config(config_path=config_toml)
     # 添加
     add_autobackup(
-        autobackuper=autobackuper, 
+        task_list=backup_job_list,
         settings_autobackup=settings_temp.autobackup, 
         local_dir=local_dir,
         now=now
         )
     # 回复
-    data = autobackuper.show_status()
+    data = show_status()
     return  {
         "code": 200,
         "data": data
@@ -82,7 +89,7 @@ async def add_backup_task(local_dir:str, config_toml:str, now:bool=False):
 @app.delete('/autobackup')
 async def del_backup_task(id:int, all:bool=False):
     '删除备份任务'
-    data = autobackuper.del_task(int(id), all)
+    data = del_task(int(id), all)
     return  {
         "code": 200,
         "data": data
@@ -92,12 +99,12 @@ async def del_backup_task(id:int, all:bool=False):
 async def retry_backup_task(id:int=-1, all:bool=False):
     '重试备份任务'
     if all:
-        for idx, task in enumerate(autobackuper.task_list):
+        for idx, task in enumerate(backup_job_list):
             if task['status'] == "failed":
-                autobackuper.change_status(idx, "waiting")
-        status = autobackuper.show_status()
+                change_status(idx, "waiting")
+        status = show_status()
     else:
-        status = autobackuper.change_status(id, "waiting")
+        status = change_status(id, "waiting")
     return  {
         "code": 200,
         "data": status
@@ -138,7 +145,7 @@ async def blrec_webhook(data: BlrecWebhookData|str):
             logger.error(e)
         # 自动备份
         local_dir = os.path.split(filename)[0]
-        add_autobackup(autobackuper=autobackuper, settings_autobackup=config.autobackup, local_dir=local_dir)
+        add_autobackup(settings_autobackup=config.autobackup, local_dir=local_dir)
     else:
         logger.info("Got unknown Event: ", event_type)
     # 回复
@@ -150,11 +157,9 @@ async def blrec_webhook(data: BlrecWebhookData|str):
 
 if __name__ == "__main__":
     # static.init()
-    autobackuper.start_check(config.autobackup)
     logger.info("Autorec service started.")
     uvicorn.run(
         app=app, 
         host=config.app['host_server'], 
         port=config.app['port_server']
         )
-    autobackuper.running = False

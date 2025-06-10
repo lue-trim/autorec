@@ -3,7 +3,7 @@ from loguru import logger
 
 from static import config
 
-from .utils import refresh_cookies
+from .utils import refresh_cookies, get_blrec_data
 
 # from .utils import add_subtitles_all
 
@@ -18,5 +18,8 @@ async def init():
 
 async def scheduled_refresh():
     '定时操作'
-    logger.debug("Start checking cookies...")
-    await refresh_cookies(silent=True)
+    if await get_blrec_data(room_id=-1, select="recording"):
+        logger.info("Trying to check cookies but still recording, skipping...")
+    else:
+        logger.debug("Start checking cookies...")
+        await refresh_cookies(silent=True)
