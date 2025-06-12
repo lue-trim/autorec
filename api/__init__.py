@@ -48,7 +48,7 @@ async def upload_video(video_filename: str, settings_alist=None, rec_info=None):
     loop.close()
 
 
-def add_autobackup(settings_autobackup:dict, local_dir:str, now=False):
+def add_autobackup(task_list:list, settings_autobackup:dict, local_dir:str, now=False):
     '自动备份功能'
     for settings_alist in settings_autobackup['servers']:
         # 判断一下开没开
@@ -77,9 +77,10 @@ def add_autobackup(settings_autobackup:dict, local_dir:str, now=False):
 
             # 添加任务
             add_task(
+                task_list = task_list,
                 t = t, 
                 local_dir = local_dir, 
                 settings_alist = settings_alist
                 )
         except Exception as e:
-            logger.log(e)
+            logger.error(e)

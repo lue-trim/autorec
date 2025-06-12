@@ -1,17 +1,20 @@
 import json, asyncio, traceback
-import bilibili_api as bili
 
+import bilibili_api as bili
 from bilibili_api import login_v2, request_settings
 from bilibili_api.login_v2 import QrCodeLoginEvents
 from bilibili_api.utils.network import get_buvid, get_bili_ticket
-from static import logger, config
 
+from loguru import logger
 from aiohttp import ClientSession, ClientTimeout
+
+from static import config
+
 
 async def send_request(timeout=20, **kwargs):
     '发送请求'
     async with ClientSession(timeout=ClientTimeout(total=timeout)) as session:
-        async with session.put(**kwargs) as res:
+        async with session.request(**kwargs) as res:
             response = await res.json()
             assert res.ok
             return response
@@ -89,7 +92,7 @@ async def login(is_tv=False):
         ans = input("\nWarning: this account maybe invalid, continue?(y/N)")
         if ans.lower() != 'y':
             return
-    print("Login complete, syncing to blrec...")
+    logger.info("Login complete, syncing to blrec...")
 
     # 保存并同步
     await sync_cookies(credential=credential)
@@ -103,11 +106,11 @@ async def refresh_cookies(is_forced=False, silent=False):
     if not is_forced:
         msg = "Checking cookies..."
         logger.info(msg)
-        print(msg)
+        # print(msg)
         if (await credential.check_refresh()) or not (await credential.check_valid()):
             msg = "Cookies expired, refreshing..."
             logger.info(msg)
-            print(msg)
+            # print(msg)
         elif silent:
             return
         else:
@@ -139,7 +142,8 @@ async def sync_cookies(credential:bili.Credential=None):
     new_data = {"header": {"cookie": new_cookies}}
     await set_blrec(new_data)
 
-    print(new_cookies)
+    # print(new_cookies)
+    logger.info(f"New cookies: {new_cookies}")
     print("Cookies sync complete.")
 
 async def try_bili_ticket(credential:bili.Credential):

@@ -130,13 +130,13 @@ async def blrec_webhook(data: BlrecWebhookData|str):
     # 更新：不用套try语句，要是出错http模块会自己处理
     if event_type == 'RecordingFinishedEvent':
         # 录制完成，如果没有其他在录制的任务的话就更新一下cookies
-        if not session.get_blrec_data(select='recording'):
-            await refresh_cookies()
+        if not await session.get_blrec_data(select='recording'):
+            await refresh_cookies(silent=True)
     elif event_type == 'VideoPostprocessingCompletedEvent':
         # 视频后处理完成，上传+自动备份
         # 获取直播间信息
         room_id = json_obj['data']['room_id']
-        room_info = session.get_blrec_data(room_id)
+        room_info = await session.get_blrec_data(room_id)
         # 上传
         filename = json_obj['data']['path']
         try:
