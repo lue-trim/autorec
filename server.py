@@ -145,7 +145,10 @@ async def blrec_webhook(data: BlrecWebhookData|str):
             logger.error(e)
         # 自动备份
         local_dir = os.path.split(filename)[0]
-        add_autobackup(settings_autobackup=config.autobackup, local_dir=local_dir)
+        add_autobackup(
+            task_list = backup_job_list,
+            settings_autobackup = config.autobackup, 
+            local_dir = local_dir)
     else:
         logger.info("Got unknown Event: ", event_type)
     # 回复
