@@ -16,8 +16,10 @@ async def send_request(timeout=20, **kwargs):
     async with ClientSession(timeout=ClientTimeout(total=timeout)) as session:
         async with session.request(**kwargs) as res:
             response = await res.json()
-            assert res.ok
-            return response
+            if not res.ok:
+                logger.error(f"Sending to blrec error: \n{response}")
+            else:
+                return response
 
 async def set_blrec(data: dict):
     '更改blrec设置'
@@ -26,7 +28,7 @@ async def set_blrec(data: dict):
     body = data
 
     # 请求API
-    resp = await send_request(timeout=20, method="post", url=url, json=body)
+    resp = await send_request(timeout=20, method="PATCH", url=url, json=body)
     assert resp
 
 async def get_blrec_data(room_id=-1, page=1, size=100, select="all"):
@@ -40,7 +42,7 @@ async def get_blrec_data(room_id=-1, page=1, size=100, select="all"):
         url = f"{config.blrec['url_blrec']}/api/v1/tasks/{room_id}/data"
     else:
         url = f"{config.blrec['url_blrec']}/api/v1/tasks/data"
-    response_json = await send_request(method="get", url=url, params=params)
+    response_json = await send_request(method="GET", url=url, params=params)
 
     return response_json
 
