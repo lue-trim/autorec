@@ -46,6 +46,16 @@ async def get_blrec_data(room_id=-1, page=1, size=100, select="all"):
 
     return response_json
 
+async def check_blrec_cookies(cookies:str):
+    '通过blrec的API检查cookies'
+    # logger.info(cookies)
+    body = {
+        'cookie': cookies
+    }
+    url = f"{config.blrec['url_blrec']}/api/v1/validation/cookie"
+    response_json = await send_request(method="POST", url=url, json=body)
+    return response_json
+
 def cookie_dict2str(data:dict):
     'cookie_dict转换为字符串'
     s = ''
@@ -53,12 +63,15 @@ def cookie_dict2str(data:dict):
         s += "{}={};".format(i, data[i])
     return s
 
-def load_credential():
+def load_credential(with_dict=False):
     '从json导入credential'
     with open("credential.json", 'r') as f:
         credential_dict = json.load(f)
     credential = bili.Credential.from_cookies(credential_dict)
-    return credential
+    if with_dict:
+        return credential, credential_dict
+    else:
+        return credential
 
 def dump_credential(credential:bili.Credential):
     '导出credential到json'
@@ -102,14 +115,18 @@ async def login(is_tv=False):
 async def refresh_cookies(is_forced=False, silent=False):
     '刷新cookies'
     # 加载cookies
-    credential = load_credential()
+    credential, cookies_dict = load_credential(with_dict=True)
+    cookies = cookie_dict2str(cookies_dict)
     
     # 检查是否需要更新
     if not is_forced:
         msg = "Checking cookies..."
         logger.info(msg)
         # print(msg)
-        if (await credential.check_refresh()) or not (await credential.check_valid()):
+
+        # 读取cookies状态
+        res = await check_blrec_cookies(cookies)
+        if not res['data']['isLogin']:
             msg = "Cookies expired, refreshing..."
             logger.info(msg)
             # print(msg)
