@@ -15,7 +15,7 @@ import cookies_checker
 from cookies_checker.utils import refresh_cookies
 
 import autobackup
-from autobackup.utils import show_status, change_status, del_task
+from autobackup.utils import show_status, change_status, del_task, dump_task, load_task
 
 from api import upload_video, add_autobackup
 
@@ -55,6 +55,10 @@ app.add_middleware(
 async def reload_settings(filename:str="settings.toml"):
     '重新加载设置'
     config.load(config_path=filename)
+    return  {
+        "code": 200,
+        "data": None
+        }
 
 
 ### 自动备份
@@ -79,6 +83,28 @@ async def add_backup_task(local_dir:str, config_toml:str, now:bool=False):
         local_dir=local_dir,
         now=now
         )
+    # 回复
+    data = show_status()
+    return  {
+        "code": 200,
+        "data": data
+        }
+
+@app.post('/autobackup/dump')
+async def dump_backup_task(filename:str="task_backup.json"):
+    '导出备份任务到文件'
+    dump_task(filename)
+    # 回复
+    data = show_status()
+    return  {
+        "code": 200,
+        "data": data
+        }
+
+@app.post('/autobackup/load')
+async def load_backup_task(filename:str="task_backup.json"):
+    '从文件中加载任务信息'
+    load_task(filename)
     # 回复
     data = show_status()
     return  {
@@ -123,8 +149,10 @@ async def blrec_webhook(data: BlrecWebhookData|str):
     '接收webhook信息'
     if type(data) is str:
         json_obj = json.loads(data)
-    else:
+    elif type(data) is BlrecWebhookData:
         json_obj = data.dict()
+    else:
+        raise
     event_type = json_obj['type']
     # 根据接收到的blrec webhook参数执行相应操作
     # 更新：不用套try语句，要是出错http模块会自己处理

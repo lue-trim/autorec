@@ -29,6 +29,7 @@ class AutoRecSession():
                 if filename:
                     if os.path.getsize(filename) == 0:
                         logger.warning(f"Skipping empty file {filename}..")
+                        return {'code': 200, 'data': None}
                     else:
                         logger.info(f"Loading file {filename}")
                         with open(filename, "rb") as f:

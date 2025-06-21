@@ -1,4 +1,4 @@
-import os
+import os, json, traceback, datetime
 
 import static
 from loguru import logger
@@ -45,7 +45,7 @@ async def upload(task_dict):
 def del_task(id:int, del_all=False):
     '删除任务'
     if del_all:
-        backup_job_list = []
+        backup_job_list.clear()
     elif 0 <= id < len(backup_job_list):
         del backup_job_list[id]
     return show_status()
@@ -68,6 +68,46 @@ def show_status():
             f"{config_temp['url_alist']}{config_temp['remote_dir']}"
         )
     return res_str
+
+def dump_task(filename:str):
+    '导出任务'
+    # 处理时间问题
+    task_list = []
+    for idx, task in enumerate(backup_job_list):
+        task_dict = task.copy()
+        task_dict.update({
+            'time': task['time'].timestamp(),
+            'status': "aborted" if task['status'] == "uploading" else task['status']
+            })
+        task_list.append(task_dict)
+    logger.debug(backup_job_list)
+
+    # 导出文件
+    try:
+        with open(filename, 'w', encoding='utf-8') as f:
+            json.dump(task_list, f)
+    except Exception:
+        logger.error(f"Dump tasks error: {traceback.format_exc()}")
+    else:
+        logger.info(f"Dumped tasks to {filename}")
+
+def load_task(filename:str):
+    '导入任务'
+    # 从文件读取
+    try:
+        with open(filename, 'r', encoding='utf-8') as f:
+            task_list = json.load(f)
+    except Exception:
+        logger.error(f"Load tasks error: {traceback.format_exc()}")
+        return
+    else:
+        logger.info(f"Loaded tasks from {filename}")
+
+    # 处理时间问题
+    for idx, task in enumerate(task_list):
+        timestamp = task['time']
+        task_list[idx]['time'] = datetime.datetime.fromtimestamp(timestamp)
+    backup_job_list.extend(task_list)
 
 ### Utils
 def get_dest_dir(local_dir: str, remote_dir: str):
