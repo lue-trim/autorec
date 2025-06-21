@@ -12,30 +12,29 @@ class AutoRecSession():
     def __init__(self, max_retries:int=6):
         self.max_retries = max_retries
 
-    @classmethod
-    async def request(self, req_type, **kwargs):
+    async def __request(self, **kwargs):
+        async with ClientSession(timeout=ClientTimeout(total=None)) as session:
+            async with session.request(**kwargs) as res:
+                response = await res.json()
+                assert res.ok
+                return response
+
+    async def request(self, filename="", **kwargs):
         '发送请求'
         for i in range(self.max_retries):
             sleep_sec = min(4**(i-1), 600)
             logger.info(f"({i+1}/{self.max_retries}) Requesting after {sleep_sec} seconds: {kwargs['url']}")
             await asyncio.sleep(sleep_sec)
             try:
-                async with ClientSession(timeout=ClientTimeout(total=None)) as session:
-                    if req_type == "put":
-                        # logger.debug(kwargs)
-                        new_kwargs = kwargs.copy()
-                        with open(new_kwargs['filename'], 'rb') as f:
-                            new_kwargs.pop('filename')
-                            new_kwargs.update({'data': f})
-                            async with session.put(**new_kwargs) as res:
-                                response = await res.json()
+                if filename:
+                    if os.path.getsize(filename) == 0:
+                        logger.warning(f"Skipping empty file {filename}..")
                     else:
-                        async with session.request(method=req_type, **kwargs) as res:
-                            # response = await res.text()
-                            # logger.debug(response)
-                            # return
-                            response = await res.json()
-                            assert res.ok
+                        logger.info(f"Loading file {filename}")
+                        with open(filename, "rb") as f:
+                            response = await self.__request(data=f, **kwargs)
+                else:
+                    response = await self.__request(**kwargs)
             except AssertionError:
                 logger.warning(f"Response Error: {response}, retrying...")
             except ClientError as e:
@@ -53,26 +52,7 @@ class AutoRecSession():
                     logger.warning(f"Response Error, retrying: {response}")
         else:
             logger.error("All requests failed.")
-
-    @classmethod
-    async def get(self, **kwargs):
-        'GET'
-        return await self.request(req_type="get", **kwargs)
-
-    @classmethod
-    async def post(self, **kwargs):
-        'POST'
-        return await self.request(req_type="post", **kwargs)
-
-    @classmethod
-    async def put(self, filename, **kwargs):
-        'PUT'
-        return await self.request(req_type="put", filename=filename, **kwargs)
-
-    @classmethod
-    async def patch(self, **kwargs):
-        'PATCH'
-        return await self.request(req_type="patch", **kwargs)
+            return {'code': 500, 'data': None}
 
     async def get_alist_token(self, settings_alist:dict):
         '获取alist管理token'
@@ -86,7 +66,12 @@ class AutoRecSession():
         }
 
         # 请求API
-        response_json = await self.post(url=url, data=json.dumps(params), headers=headers)
+        response_json = await self.request(
+            method="post",
+            url=url, 
+            data=json.dumps(params), 
+            headers=headers
+            )
         # 获取结果
         if response_json['code'] == 200:
             return response_json['data']['token']
@@ -108,7 +93,12 @@ class AutoRecSession():
         }
 
         # 请求API
-        data = await self.post(url=url, data=json.dumps(data), headers=headers)
+        data = await self.request(
+            method="post",
+            url=url, 
+            data=json.dumps(data), 
+            headers=headers
+            )
 
         # 获取结果
         if data['code'] == 200:
@@ -132,7 +122,12 @@ class AutoRecSession():
         }
 
         # 请求API
-        data = await self.post(url=url, data=json.dumps(data), headers=headers)
+        data = await self.request(
+            method="post",
+            url=url, 
+            data=json.dumps(data), 
+            headers=headers
+            )
 
         # 获取结果
         if data['code'] == 200:
@@ -141,18 +136,6 @@ class AutoRecSession():
             logger.error("Remove failed:", dirname, filenames, data['message'])
         
         return data['code']
-
-    async def upload_alist_action(self, settings_alist:dict, token:str, local_filename:str, dest_filename:str):
-        '供multiprocessing使用的流式上传文件'
-        for i in range(6):
-            try:
-                await self.upload_alist(settings_alist, token, local_filename, dest_filename)
-            except Exception:
-                logger.error(traceback.format_exc())
-                await asyncio.sleep(4**i)
-        else:
-            from requests.exceptions import RequestException
-            raise RequestException()
 
     async def upload_alist(self, settings_alist:dict, token:str, filename:str, dest_filename:str):
         '流式上传文件'
@@ -168,13 +151,14 @@ class AutoRecSession():
         }
 
         # 打开文件
-        response_json = await self.put(url=url, filename=filename, headers=headers)
-        # with open(filename, 'rb') as f:
-        #     # data = File(f, filename) # aiohttp的put没有requests库那种奇怪的bug, 不用自定义File类
-        #     data = f
-        #     # 请求API
-        #     response_json = await self.put(url=url, data=data, headers=headers)
-        
+        response_json = await self.request(
+            filename=filename, 
+            method="put", 
+            url=url, 
+            headers=headers
+            )
+        # 不能在这一步加载文件，否则会出现重试时无法载入已关闭文件描述符的bug
+
         if response_json['code'] == 200:
             logger.info(f"Upload success: {filename}")
             # 是否在上传后删除文件
@@ -190,7 +174,12 @@ class AutoRecSession():
         body = data
 
         # 请求API
-        resp = await self.patch(url=url, json=body, timeout=20)
+        resp = await self.request(
+            method="post",
+            url=url, 
+            json=body, 
+            timeout=20
+            )
         assert resp
     
     async def get_blrec_data(self, room_id=-1, page=1, size=100, select="all"):
@@ -204,7 +193,11 @@ class AutoRecSession():
             url = f"{config.blrec['url_blrec']}/api/v1/tasks/{room_id}/data"
         else:
             url = f"{config.blrec['url_blrec']}/api/v1/tasks/data"
-        response_json = await self.get(url=url, params=params)
+        response_json = await self.request(
+            method="get",
+            url=url, 
+            params=params
+            )
 
         return response_json
 
