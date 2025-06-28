@@ -2,6 +2,8 @@ import asyncio, traceback, json
 from aiohttp import ClientSession, ClientTimeout
 from urllib.parse import quote
 
+from alist import get_alist
+
 class Session():
     max_retries = 6
 
@@ -67,9 +69,12 @@ async def __test():
         'password': '23dd49243007242245815f9a2948b1e3da9f12bd0dc592ea1e85f4a33fb2bf26',
         }
     session = Session()
-
-    # 传到百度
     token = await session.get_alist_token(settings)
+
+    res = await get_alist(settings, token, "/baidu/叽叽啊")
+    print(json.dumps(res))
+    return
+    # 传到百度
     dest_filename = "/baidu/test/test.txt"
     res = await session.upload_alist(settings, token, "empty.txt", dest_filename)
 

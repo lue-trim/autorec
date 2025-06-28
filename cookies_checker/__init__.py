@@ -3,7 +3,8 @@ from loguru import logger
 
 from static import config
 
-from .utils import refresh_cookies, get_blrec_data
+from .utils import refresh_cookies
+from blrec import get_blrec_data
 
 # from .utils import add_subtitles_all
 

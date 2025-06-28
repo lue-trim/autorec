@@ -1,23 +1,21 @@
 import os, json, traceback, datetime
 
-import static
-from loguru import logger
-
-from static import backup_job_list
+import alist
+from static import backup_job_list, logger
 
 def add_task(task_list, t, local_dir, settings_alist):
-        '添加任务'
-        task_dict = {
-            'time': t,
-            'local_dir': local_dir,
-            'settings_alist': settings_alist,
-            'status': 'waiting',
-        }
+    '添加任务'
+    task_dict = {
+        'time': t,
+        'local_dir': local_dir,
+        'settings_alist': settings_alist,
+        'status': 'waiting',
+    }
 
-        # 查重
-        if task_dict not in task_list:
-            logger.info(f"Auto backuping task created on {t}, {local_dir} -> {settings_alist['remote_dir']}")
-            task_list.append(task_dict)
+    # 查重
+    if task_dict not in task_list:
+        logger.info(f"Auto backuping task created on {t}, {local_dir} -> {settings_alist['remote_dir']}")
+        task_list.append(task_dict)
 
 async def upload(task_dict):
     '执行上传'
@@ -33,13 +31,13 @@ async def upload(task_dict):
             del filenames[idx]
     
     # 获取token
-    token = await static.session.get_alist_token(settings_temp)
+    token = await alist.get_alist_token(settings_temp)
 
     # 上传文件
     for filename in filenames:
         local_filename = os.path.join(local_dir, filename)
         dest_filename = os.path.join(dest_dir, filename)
-        await static.session.upload_alist(settings_temp, token, local_filename, dest_filename)
+        await alist.upload_alist(settings_temp, token, local_filename, dest_filename)
 
 
 def del_task(id:int, del_all=False):
