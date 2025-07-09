@@ -1,6 +1,18 @@
-import sys, toml, asyncio, traceback, json, os
-# from requests.adapters import HTTPAdapter
+import sys, toml
+from importlib.metadata import version
 from loguru import logger
+
+class App:
+    'autorec的自身信息'
+
+    @staticmethod
+    def get_version(package_name=""):
+        '获取运行中的包版本'
+        return {
+            'name': package_name,
+            'version': version(package_name)
+        }
+
 
 class Config:
     __app:dict

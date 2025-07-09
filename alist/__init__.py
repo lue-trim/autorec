@@ -194,8 +194,10 @@ async def upload_alist(settings_alist:dict, token:str, filename:str, dest_filena
         # 是否在上传后删除文件
         if settings_alist['remove_after_upload']:
             os.remove(filename)
+        return True
     else:
         logger.error("{} Upload failed: {}".format(filename, response_json))
+        return False
 
 
 ### Frequently Used Methods

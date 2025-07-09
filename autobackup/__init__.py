@@ -28,13 +28,16 @@ async def scheduled_check():
             change_status(task_id, 'uploading')
             # 上传
             try:
-                await upload(task_dict)
+                all_ok = await upload(task_dict)
             except Exception as e:
                 logger.error(traceback.format_exc())
                 change_status(task_id, 'failed')
             else:
                 # 标记为已完成
-                change_status(task_id, 'completed')
+                if all_ok:
+                    change_status(task_id, 'completed')
+                else:
+                    change_status(task_id, 'partically failed')
             # break
 
 def add_autobackup(task_list:list, settings_autobackup:dict, local_dir:str, now=False):

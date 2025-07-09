@@ -1,6 +1,7 @@
 # autorec
 一个利用blrec的webhook和alist的API，实现录播完成后自动把文件上传到服务器并删除本地文件、每日自动备份文件到其他存储、自动更新cookies操作的脚本  
-理论上稍微改改API，也能用在命令行版录播姬上
+理论上稍微改改API，也能用在命令行版录播姬上  
+> PS: openlist之类的社区版alist也能用
 ## 基于项目
 - [acgnhiki/blrec](https://github.com/acgnhiki/blrec)；
 - [nemo2011/bilibili-api](https://github.com/nemo2011/bilibili-api)；
@@ -89,20 +90,63 @@ yarl==1.18.3
 pip install -r requirement.txt
 ```
 
-# 配置说明
-## 初次设置
-第一次运行的时候会生成配置模板`settings.toml`，需要根据实际运行环境自行修改参数
+# 功能说明
+## 运行方法与初次设置
+- 直接在终端运行`python server.py`，或者自己写一个`autorec.service`添加到systemctl都可以，能跑起来就行
 
-## 录制完成后立即自动上传
-- 原理：在视频后处理完成后会自动获取一次录制信息，并填充到`[alist]/remote_dir`所设定的路径模板中  
+- 第一次运行的时候会生成配置模板`settings.toml`并退出，需要根据实际运行环境自行修改参数
+
+## `client.py`使用说明
+### 基本使用
+- 使用`-h/--help`参数获取帮助，`--config 配置文件名称`临时加载配置，`--reload 配置文件名称`更新全局配置，`--version 包名`获取运行中的包版本信息
+
+示例：
+```bash
+python client.py --help
+python client.py --reload config2.toml
+python client.py --version bilibili-api-python
+```
+### cookies模块
+用于管理供blrec、HarukaBot等其他项目使用的cookies，完整帮助参见`python client.py cookies --help`
+1. 第一次使用需运行`python client.py cookies -l`扫码登录
+2. 在`settings.toml`中，如果配置了`cookies.check_interval`，则会自动根据时间间隔检测cookies是否有效，要是失效了会自动更新  
+  > 也可以`python client.py cookies -c`手动检查一下cookies有没有过期，如果检查发现过期会自动更新  
+  > 当然还可以通过`python client.py cookies -cf`强制刷新
+3. 一般来说登录或刷新后会自动把获取到的cookies同步到blrec，如果同步失败，可以尝试`python client.py cookies -s`重新同步
+  > 若Cookies更新提示correspondPath获取失败，请先同步本地时间后再试
+### 自动备份模块
+- 管理每日自动备份任务
+- 完整帮助参见`python client.py backup --help`
+#### 每日自动备份
+用于在每天指定时段向特定alist存储备份刚刚录制好的文件（但是不能使用立即上传功能的路径模板）  
+要完全关闭该功能，把server项给置空就可以  
+- 在`settings.toml`中对应的位置设置alist的主机、端口号、用户名、加密后的密码（获取方法[在这](https://alist-v3.apifox.cn/api-128101242)）
+- 在`settings.toml`\[autobackup\]模块中的`interval`项设置时间检查间隔（区间越短CPU占用越大）
+- 按照与\[alist\]模块相同的格式，把要添加到的存储添加到`autobackup.servers`列表，可以同时备份到多个存储  
+（参见第一次运行时生成的配置模板）  
+（除了不能用路径模板以外，其他内容都和\[alist\]里一样）  
+- 对于每个`autobackup.servers`项，都需要设置一个预定上传时间  
+（格式是`"%H:%M:%S"`）
+- 每个存储可以和\[alist\]模块一样通过设置`enabled`项控制开关
+- **注意**：如果要备份到多个存储，并且上传后自动删除文件，记得把`remove_after_upload=true`放在**最后一个**存储下
+#### 手动补录/取消备份
+直接举例子吧：  
+手动加载配置文件并添加备份任务：`python client.py backup -a /local/records -c upload_config.toml`  
+看看当前任务和历史记录：`python client.py backup -s`  
+删掉最早的自动备份任务：`python client.py backup -d 0`  
+立即上传：`python client.py backup -u /local/records/1/`  
+
+
+## 录制完成立即上传功能
+- 使用预设的路径模板，在视频完成录制后自动上传到指定alist存储
 - 可以通过设置\[alist\]模块的`enabled`字段控制自动上传功能开启/关闭  
+- 如果不需要立即上传并且用不到路径模板，那么更推荐直接使用上文的**自动备份模块**
 ### 使用配置
 #### blrec
 1. 在blrec的Webhook设置中添加autorec的url(默认是`http://localhost:23560`)
 1. 至少勾选`VideoPostprocessingCompletedEvent`（自动上传视频和弹幕）和`RecordingFinishedEvent`（自动更新cookies）
 1. 在`settings.toml`\[blrec\]模块中设置blrec的主机与端口号
 #### autorec
-- 需在`settings.toml`\[alist\]模块中设置alist的主机、端口号、用户名、加密后的密码（获取方法[在这](https://alist-v3.apifox.cn/api-128101242)）
 - 各项参数的具体用法可以参考第一次运行时生成的配置模板
 - **注意**：如果要设置每日自动备份，记得把`remove_after_upload`给设成`false`
 ##### 上传路径模板说明 
@@ -164,42 +208,3 @@ pip install -r requirement.txt
   }
 }
 ```
-## 下播后自动更新cookies
-1. 需要先用`account.py`登录扫码获取cookies
-1. 然后每次blrec发送`RecordingFinishedEvent`事件时就会自动读取、更新并设置cookies了  
-
-要关闭该功能，只需在blrec的设置里关掉对应的webhook就行
-
-## 每日自动备份
-可以在每天指定时段向特定alist存储备份刚刚录制好的文件（但是不能使用立即上传功能的路径模板）  
-要完全关闭该功能，把server项给置空就可以
-### 使用配置
-- 在`settings.toml`\[autobackup\]模块中的`interval`项设置时间检查间隔（区间越短CPU占用越大）
-- 按照与\[alist\]模块相同的格式，把要添加到的存储添加到`autobackup.servers`列表，可以同时备份到多个存储  
-（参见第一次运行时生成的配置模板）  
-（除了不能用路径模板以外，其他内容都和\[alist\]里一样）  
-- 对于每个`autobackup.servers`项，都需要设置一个预定上传时间  
-（格式是`"%H:%M:%S"`）
-- 每个存储可以和\[alist\]模块一样通过设置`enabled`项控制临时开启/关闭
-- **注意**：如果要备份到多个存储，并且上传后自动删除文件，记得把`remove_after_upload=true`放在**最后一个**存储下
-
-## 登录、刷新、同步cookies
-1. 第一次使用需运行`python account.py -l`扫码登录
-1. 之后每隔几天可以`python account.py -c`手动检查一下cookies有没有过期，如果检查发现过期会自动更新  
-当然也可以通过`python account.py -cf`强制刷新
-1. 一般来说登录或刷新后会自动把获取到的cookies同步到blrec，如果同步失败，可以尝试`python account.py -s`重新同步
-> 若Cookies更新提示correspondPath获取失败，请先同步本地时间后再试
-
-## 手动补录/取消备份
-运行`python autobackup.py`，通过读取指定配置文件里的\[autobackup\]设置，增、删、查目前存在的备份任务  
-具体使用说明可以加`-h`/`--help`查看  
-
-例：  
-手动加载配置文件并添加备份任务：`python autobackup.py -a /local/records -c upload_config.toml`  
-看看现在有哪些任务要备份：`python autobackup.py -s`  
-删掉最早的自动备份任务：`python autobackup.py -d 0`  
-立即上传：`python autobackup.py -u /local/records/1/`  
-
-# 运行方法
-直接在终端运行`python autorec.py`，或者自己写一个`autorec.service`添加到systemctl都可以，能跑起来就行
-

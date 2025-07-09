@@ -34,10 +34,16 @@ async def upload(task_dict):
     token = await alist.get_alist_token(settings_temp)
 
     # 上传文件
+    all_ok = True
     for filename in filenames:
         local_filename = os.path.join(local_dir, filename)
         dest_filename = os.path.join(dest_dir, filename)
-        await alist.upload_alist(settings_temp, token, local_filename, dest_filename)
+        is_ok = await alist.upload_alist(settings_temp, token, local_filename, dest_filename)
+        if not is_ok:
+            all_ok = False
+
+    # 返回状态
+    return all_ok
 
 
 def del_task(id:int, del_all=False):

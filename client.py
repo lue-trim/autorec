@@ -123,10 +123,19 @@ async def __handle_backup(args):
         await add_task(url, config_file=config_file, local_dir=args.upload, now=True)
 
 async def __handle_config(args):
-    if hasattr(args, 'reload'):
+    if args.reload:
         config = Config(args.reload)
         url = f"http://{config.app['host_server']}:{config.app['port_server']}"
         await dump_load_reload(url, args.reload, mode="reload")
+    elif args.version:
+        config = Config(args.config)
+        url = f"http://{config.app['host_server']}:{config.app['port_server']}/version"
+        data = await request(method="get", url=url, params={'package': args.version})
+        if data['code'] == 200:
+            ver_dict = data['data']
+            logger.info(f"{ver_dict['name']}: {ver_dict['version']}")
+        else:
+            logger.error(f"Get version for {args.version} failed: \n{data['data']}")
 
 def main():
     'main'
@@ -134,6 +143,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--config", help="载入临时配置文件", default="settings.toml")
     p.add_argument("--reload", help="重新载入全局配置")
+    p.add_argument("--version", help="查看运行中的包版本")
     p.set_defaults(func=lambda x:asyncio.run(__handle_config(x)))
 
     sp = p.add_subparsers(title="subcommand")

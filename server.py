@@ -1,4 +1,4 @@
-import json, os, uvicorn
+import json, os, uvicorn, traceback
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 import alist
 import blrec
 
-from static import config, logger, Config, backup_job_list
+from static import config, logger, Config, backup_job_list, App
 
 import cookies_checker
 from cookies_checker.utils import refresh_cookies
@@ -50,6 +50,21 @@ app.add_middleware(
 
 
 ### 设置
+@app.get('/version')
+async def get_version(package:str=""):
+    '获取任务包版本'
+    try:
+        ver_dict = App.get_version(package)
+        return {
+            "code": 200,
+            "data": ver_dict
+        }
+    except Exception:
+        return {
+            'code': 422,
+            'data': traceback.format_exc()
+        }
+
 @app.post('/settings/reload')
 async def reload_settings(filename:str="settings.toml"):
     '重新加载设置'
