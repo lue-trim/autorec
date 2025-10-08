@@ -1,9 +1,10 @@
 import os, json, traceback, datetime
 
 import alist
-from static import backup_job_list, logger
+from static import logger, config
+from db.models import BackupTask
 
-def add_task(task_list, t, local_dir, settings_alist):
+async def add_task(t, local_dir, settings_alist):
     '添加任务'
     task_dict = {
         'time': t,
@@ -13,9 +14,15 @@ def add_task(task_list, t, local_dir, settings_alist):
     }
 
     # 查重
-    if task_dict not in task_list:
-        logger.info(f"Auto backuping task created on {t}, {local_dir} -> {settings_alist['remote_dir']}")
-        task_list.append(task_dict)
+    if await BackupTask.filter(
+        **task_dict
+        ).count() == 0:
+    # if task_dict not in task_list:
+        logger.info(
+            f"Autobackup task created on {t}, {local_dir} -> {settings_alist['remote_dir']}"
+            )
+        # task_list.append(task_dict)
+        await BackupTask.update_or_create(task_dict)
 
 async def upload(task_dict):
     '执行上传'
@@ -46,26 +53,44 @@ async def upload(task_dict):
     return all_ok
 
 
-def del_task(id:int, del_all=False):
+async def del_task(id:int, del_all=False):
     '删除任务'
     if del_all:
-        backup_job_list.clear()
-    elif 0 <= id < len(backup_job_list):
-        del backup_job_list[id]
-    return show_status()
+        await BackupTask.all().delete()
+    else:
+        await BackupTask.filter(id=id).delete()
+    return await show_status()
 
-def change_status(id:int, status:str):
+async def retry_task(id:int, retry_all=False):
+    '重试任务'
+    # 判断是重试所有还是只试指定id
+    if retry_all:
+        id_dict_list = await BackupTask.filter(status__not='completed').values('id')
+    else:
+        id_dict_list = [{'id': id}]
+
+    # 开工
+    for i in id_dict_list:
+        await change_status(i['id'], 'waiting')
+
+    return await show_status()
+
+
+async def change_status(id:int, status:str):
     '改变任务状态'
-    backup_job_list[id]['status'] = status
-    return show_status()
-    
-def show_status():
+    await BackupTask.filter(id=id).update(status=status)
+    # backup_job_list[id]['status'] = status
+    return await show_status()
+
+
+async def show_status():
     '获取备份情况'
     res_str = ''
+    backup_job_list = await BackupTask.all().values('status', 'id', 'time', 'local_dir', 'settings_alist')
     for idx, i in enumerate(backup_job_list):
         config_temp = i['settings_alist']
         res_str += "ID: {} \tStatus: {} \tScheduled Time: {} \tLocal dir:{} \tRemote dir:{} \n".format(
-            idx,
+            i['id'],
             i['status'],
             i['time'].strftime(r"%y/%m/%dT%H:%M:%S"),
             i['local_dir'],
@@ -73,10 +98,12 @@ def show_status():
         )
     return res_str
 
-def dump_task(filename:str):
+
+async def dump_task(filename:str):
     '导出任务'
     # 处理时间问题
     task_list = []
+    backup_job_list = await BackupTask.all().values('status', 'time', 'local_dir', 'settings_alist')
     for idx, task in enumerate(backup_job_list):
         task_dict = task.copy()
         task_dict.update({
@@ -95,7 +122,8 @@ def dump_task(filename:str):
     else:
         logger.info(f"Dumped tasks to {filename}")
 
-def load_task(filename:str):
+
+async def load_task(filename:str):
     '导入任务'
     # 从文件读取
     try:
@@ -111,7 +139,43 @@ def load_task(filename:str):
     for idx, task in enumerate(task_list):
         timestamp = task['time']
         task_list[idx]['time'] = datetime.datetime.fromtimestamp(timestamp)
-    backup_job_list.extend(task_list)
+    # backup_job_list.extend(task_list)
+
+    # 同步到数据库
+    await BackupTask.bulk_create([BackupTask(**i) for i in task_list])
+
+
+async def scheduled_check():
+    '定时检查是不是该备份了'
+    logger.debug("Start checking autobackups...")
+    backup_job_list = await BackupTask.filter(status='waiting').values(
+        'status', 'id', 'time', 'local_dir', 'settings_alist'
+        )
+    for _, task_dict in enumerate(backup_job_list):
+        if datetime.datetime.now() >= task_dict['time']:# and task_dict['status'] == 'waiting':
+            # 发现到点了并且待上传
+            task_id = task_dict['id']
+            logger.info(f"Auto backuping...")
+            logger.debug(f"{task_dict}")
+            await change_status(task_id, 'uploading')
+            # 上传
+            try:
+                all_ok = await upload(task_dict)
+            except Exception as e:
+                logger.error(traceback.format_exc())
+                await change_status(task_id, 'failed')
+            else:
+                # 标记为已完成
+                if all_ok:
+                    await change_status(task_id, 'completed')
+                else:
+                    await change_status(task_id, 'partically failed')
+            # break
+
+    # 自动删除完成的任务
+    if config.autobackup['auto_remove']:
+        await BackupTask.filter(status='completed').all().delete()
+
 
 ### Utils
 def get_dest_dir(local_dir: str, remote_dir: str):

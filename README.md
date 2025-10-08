@@ -8,6 +8,25 @@
 - [alist-org/docs](https://github.com/alist-org/docs)
 
 # 环境
+## Postgres
+最简单的办法是直接通过官方Docker镜像部署，版本随意，如果已经有了就不用再装一个
+1. 下载  
+    ```bash
+    docker pull postgres:latest
+    ```
+1. 运行  
+    可以参考以下配置
+    ```bash
+    docker run -d \
+    -e POSTGRES_PASSWORD=<数据库密码> \ # 自己取
+    -e POSTGRES_HOST_AUTH_METHOD=trust \
+    -v <路径>:/var/lib/postgresql/data \ # 存放数据库用的，最好是空文件夹
+    -p <端口号>:5432 \ # 映射到本地的端口号，随便取，注意要和后端的设置对应上
+    --restart unless-stopped \ # 崩溃时自动重启
+    --name postgres \ # 容器名称，可以随便设置
+    postgres:latest
+    ```
+1. 不出意外的话只要让它一直运行就可以了
 ## Python 3.10
 按理来说直接使用[Haruka-Bot](https://github.com/lue-trim/haruka-bot)的环境应该就可以  
 如果不要haruka-bot的话可以把它去掉
@@ -95,6 +114,24 @@ pip install -r requirement.txt
 - 直接在终端运行`python server.py`，或者自己写一个`autorec.service`添加到systemctl都可以，能跑起来就行
 
 - 第一次运行的时候会生成配置模板`settings.toml`并退出，需要根据实际运行环境自行修改参数
+
+### `db`模块
+运行前需要设置postgres数据库的地址、账号等信息并手动创建数据库  
+示例：假设用户名为postgres，docker容器名为pg_container，`settings.toml`中设置的数据库名称为autorec_db
+- docker: 
+  ```bash
+  docker exec -it pg_container psql -U postgres
+  CREATE DATABASE autorec_db;
+  \q
+  ```
+- 原生:
+  ```bash
+  psql -U postgres
+  CREATE DATABASE autorec_db;
+  \q
+  ```
+### 其他模块
+直接参考生成的默认配置文件里的说明就行
 
 ## `client.py`使用说明
 ### 基本使用

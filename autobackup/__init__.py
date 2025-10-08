@@ -3,9 +3,9 @@ import traceback, datetime, asyncio
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from loguru import logger
 
-from static import config, backup_job_list
+from static import config
 
-from .utils import change_status, upload, add_task
+from .utils import change_status, upload, add_task, scheduled_check
 
 
 async def init():
@@ -17,30 +17,7 @@ async def init():
     logger.debug(f"Autobackup scheduler started (Interval: {interval}s)")
     return scheduler
 
-async def scheduled_check():
-    '定时检查是不是该备份了'
-    logger.debug("Start checking autobackups...")
-    for task_id, task_dict in enumerate(backup_job_list):
-        if datetime.datetime.now() >= task_dict['time'] and task_dict['status'] == 'waiting':
-            # 发现到点了并且待上传
-            logger.info(f"Auto backuping...")
-            logger.debug(f"{task_dict}")
-            change_status(task_id, 'uploading')
-            # 上传
-            try:
-                all_ok = await upload(task_dict)
-            except Exception as e:
-                logger.error(traceback.format_exc())
-                change_status(task_id, 'failed')
-            else:
-                # 标记为已完成
-                if all_ok:
-                    change_status(task_id, 'completed')
-                else:
-                    change_status(task_id, 'partically failed')
-            # break
-
-def add_autobackup(task_list:list, settings_autobackup:dict, local_dir:str, now=False):
+async def add_autobackup(settings_autobackup:dict, local_dir:str, now=False):
     '自动备份功能'
     for settings_alist in settings_autobackup['servers']:
         # 判断一下开没开
@@ -68,8 +45,8 @@ def add_autobackup(task_list:list, settings_autobackup:dict, local_dir:str, now=
             t = datetime.datetime.strptime(formatted_time, r"%y/%m/%dT%H:%M:%S")
 
             # 添加任务
-            add_task(
-                task_list = task_list,
+            await add_task(
+                # task_list = task_list,
                 t = t, 
                 local_dir = local_dir, 
                 settings_alist = settings_alist

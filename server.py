@@ -9,14 +9,15 @@ from contextlib import asynccontextmanager
 
 import alist
 import blrec
+import db
 
-from static import config, logger, Config, backup_job_list, App
+from static import config, logger, Config, App
 
 import cookies_checker
 from cookies_checker.utils import refresh_cookies
 
 import autobackup
-from autobackup.utils import show_status, change_status, del_task, dump_task, load_task
+from autobackup.utils import show_status, change_status, del_task, dump_task, load_task, retry_task
 
 
 class BlrecWebhookData(BaseModel):
@@ -31,6 +32,7 @@ class BlrecWebhookData(BaseModel):
 async def lifespan(_app):
     '生命周期管理'
     # config.load()
+    await db.init_db()
     cookies_scheduler = await cookies_checker.init()
     autobackup_scheduler = await autobackup.init()
 
@@ -38,6 +40,7 @@ async def lifespan(_app):
 
     cookies_scheduler.shutdown()
     autobackup_scheduler.shutdown()
+    await db.close()
 
 app = FastAPI(lifespan=lifespan)
 app.add_middleware(
@@ -79,7 +82,7 @@ async def reload_settings(filename:str="settings.toml"):
 @app.get('/autobackup')
 async def get_backup_status():
     '获取自动备份工作状态'
-    data = show_status()
+    data = await show_status()
     return  {
         "code": 200,
         "data": data
@@ -91,14 +94,14 @@ async def add_backup_task(local_dir:str, config_toml:str, now:bool=False):
     # 获取数据
     settings_temp = Config(config_path=config_toml)
     # 添加
-    autobackup.add_autobackup(
-        task_list=backup_job_list,
+    await autobackup.add_autobackup(
+        # task_list=backup_job_list,
         settings_autobackup=settings_temp.autobackup, 
         local_dir=local_dir,
         now=now
         )
     # 回复
-    data = show_status()
+    data = await show_status()
     return  {
         "code": 200,
         "data": data
@@ -107,9 +110,9 @@ async def add_backup_task(local_dir:str, config_toml:str, now:bool=False):
 @app.post('/autobackup/dump')
 async def dump_backup_task(filename:str="task_backup.json"):
     '导出备份任务到文件'
-    dump_task(filename)
+    await dump_task(filename)
     # 回复
-    data = show_status()
+    data = await show_status()
     return  {
         "code": 200,
         "data": data
@@ -118,9 +121,9 @@ async def dump_backup_task(filename:str="task_backup.json"):
 @app.post('/autobackup/load')
 async def load_backup_task(filename:str="task_backup.json"):
     '从文件中加载任务信息'
-    load_task(filename)
+    await load_task(filename)
     # 回复
-    data = show_status()
+    data = await show_status()
     return  {
         "code": 200,
         "data": data
@@ -129,7 +132,7 @@ async def load_backup_task(filename:str="task_backup.json"):
 @app.delete('/autobackup')
 async def del_backup_task(id:int, all:bool=False):
     '删除备份任务'
-    data = del_task(int(id), all)
+    data = await del_task(int(id), all)
     return  {
         "code": 200,
         "data": data
@@ -138,13 +141,7 @@ async def del_backup_task(id:int, all:bool=False):
 @app.post('/autobackup/retry')
 async def retry_backup_task(id:int=-1, all:bool=False):
     '重试备份任务'
-    if all:
-        for idx, task in enumerate(backup_job_list):
-            if task['status'] == "failed":
-                change_status(idx, "waiting")
-        status = show_status()
-    else:
-        status = change_status(id, "waiting")
+    status = await retry_task(id=id, retry_all=all)
     return  {
         "code": 200,
         "data": status
@@ -187,8 +184,8 @@ async def blrec_webhook(data: BlrecWebhookData|str):
             logger.error(e)
         # 自动备份
         local_dir = os.path.split(filename)[0]
-        autobackup.add_autobackup(
-            task_list = backup_job_list,
+        await autobackup.add_autobackup(
+            # task_list = backup_job_list,
             settings_autobackup = config.autobackup, 
             local_dir = local_dir)
     else:

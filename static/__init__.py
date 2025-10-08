@@ -21,6 +21,7 @@ class Config:
     __blrec:dict
     __autobackup:dict
     __cookies:dict
+    __db:dict
 
     def __init__(self, config_path="settings.toml"):
         self.load(config_path)
@@ -51,6 +52,11 @@ class Config:
         return self.__alist
 
     @property
+    def db(self):
+        '数据库设置'
+        return self.__db
+
+    @property
     def log(self):
         '日志记录器'
         return self.__log
@@ -77,6 +83,7 @@ check_interval = 43200 # optional, in seconds
 [autobackup]
 # Settings for auto backup
 check_interval = 60 # optional, in seconds
+auto_remove = true # optional, whether remove task when completed, true in default
 [[autobackup.servers]]
 # Support multiple remote configs, the same format as 'alist' part above
 # For example, when remote_dir is set to /xxx, then it seems like:
@@ -93,6 +100,14 @@ remove_after_upload = false
 host_server = 'localhost'
 port_server = 23560
 max_retries = 6
+
+[db]
+# database settings, currently supports postgres only
+pg_host = 'localhost'
+pg_port = '5432'
+pg_user = 'postgres'
+pg_password = 'pg_password'
+pg_database = 'autorec'
 
 [log]
 file = "logs.log" # Leave empty to disable logging to file
@@ -114,6 +129,7 @@ level = "INFO"
             self.__blrec = config_file.get('blrec', {})
             self.__alist = config_file.get('alist', {})
             self.__log = config_file.get('log', {})
+            self.__db = config_file.get('db', {})
 
         # 设置默认值
         self.__app.setdefault('max_retries', 6)
@@ -124,6 +140,7 @@ level = "INFO"
         self.__alist.setdefault('enabled', True)
 
         self.__autobackup.setdefault('interval', 60)
+        self.__autobackup.setdefault('auto_remove', True)
         # self.settings_autobackup.setdefault('retry_times', 6)
         self.__autobackup.setdefault('servers', [])
         for i in self.__autobackup['servers']:
