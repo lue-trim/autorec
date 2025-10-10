@@ -12,17 +12,17 @@ async def add_task(t, local_dir, settings_alist):
         'settings_alist': settings_alist,
         'status': 'waiting',
     }
+    logger.debug(f"Adding task scheduled at {t.isoformat()}")
 
     # 查重
     if await BackupTask.filter(
-        **task_dict
+        local_dir=local_dir, settings_alist=settings_alist, time=t
         ).count() == 0:
-    # if task_dict not in task_list:
-        logger.info(
-            f"Autobackup task created on {t}, {local_dir} -> {settings_alist['remote_dir']}"
-            )
-        # task_list.append(task_dict)
-        await BackupTask.update_or_create(task_dict)
+        # 上传时间、配置、本地文件夹均不相同时才新建
+        await BackupTask.create(**task_dict)
+        logger.debug("Task created.")
+    else:
+        logger.debug("Task not created as existing")
 
 async def upload(task_dict):
     '执行上传'
@@ -45,6 +45,11 @@ async def upload(task_dict):
     for filename in filenames:
         local_filename = os.path.join(local_dir, filename)
         dest_filename = os.path.join(dest_dir, filename)
+        ## 检查文件是否已存在
+        if await alist.get_alist(settings_temp, token, path=dest_filename):
+            logger.warning(f"File {dest_filename} exists, skipping...")
+            continue
+        ## 上传
         is_ok = await alist.upload_alist(settings_temp, token, local_filename, dest_filename)
         if not is_ok:
             all_ok = False
@@ -92,7 +97,7 @@ async def show_status():
         res_str += "ID: {} \tStatus: {} \tScheduled Time: {} \tLocal dir:{} \tRemote dir:{} \n".format(
             i['id'],
             i['status'],
-            i['time'].strftime(r"%y/%m/%dT%H:%M:%S"),
+            i['time'].isoformat(),
             i['local_dir'],
             f"{config_temp['url_alist']}{config_temp['remote_dir']}"
         )
@@ -152,7 +157,7 @@ async def scheduled_check():
         'status', 'id', 'time', 'local_dir', 'settings_alist'
         )
     for _, task_dict in enumerate(backup_job_list):
-        if datetime.datetime.now() >= task_dict['time']:# and task_dict['status'] == 'waiting':
+        if datetime.datetime.now(tz=datetime.timezone.utc) >= task_dict['time']:# and task_dict['status'] == 'waiting':
             # 发现到点了并且待上传
             task_id = task_dict['id']
             logger.info(f"Auto backuping...")

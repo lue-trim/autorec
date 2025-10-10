@@ -27,7 +27,7 @@ async def add_autobackup(settings_autobackup:dict, local_dir:str, now=False):
         try:
             # 读取时间
             scheduled_time = settings_alist['time']
-            datetime_now = datetime.datetime.now()
+            datetime_now = datetime.datetime.now().astimezone()
             time_today = datetime_now.strftime(r'%H:%M:%S')
 
             # 如果立即上传的话
@@ -42,7 +42,11 @@ async def add_autobackup(settings_autobackup:dict, local_dir:str, now=False):
                 # 如果时间已经过了，挪到第二天
                 scheduled_date = (datetime_now + datetime.timedelta(days=1)).strftime(r'%y/%m/%d')
             formatted_time = f"{scheduled_date}T{scheduled_time}"
-            t = datetime.datetime.strptime(formatted_time, r"%y/%m/%dT%H:%M:%S")
+
+            # 本地时间转UTC
+            t = datetime.datetime.strptime(
+                formatted_time, r"%y/%m/%dT%H:%M:%S"
+                ).astimezone(datetime.timezone.utc)
 
             # 添加任务
             await add_task(

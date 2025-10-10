@@ -86,7 +86,7 @@ check_interval = 60 # optional, in seconds
 auto_remove = true # optional, whether remove task when completed, true in default
 [[autobackup.servers]]
 # Support multiple remote configs, the same format as 'alist' part above
-# For example, when remote_dir is set to /xxx, then it seems like:
+# For example, when remote_dir is set to /xxx, it would seem like:
 # local(automatically get from blrec): /aaa/bbb/ccc/d.flv(xml,jsonl...) -> remote: /xxx/ccc/d.flv(xml,jsonl...)
 enabled = true
 time = "07:00:00"
