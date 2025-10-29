@@ -11,7 +11,7 @@ async def __request(**kwargs):
         async with session.request(**kwargs) as res:
             response = await res.json()
             # 如果alist报错找不到文件，返回码改成200
-            if response.get('message', '') == "object not found":
+            if "object not found" in response.get('message', ''):
                 response.update({'code': 200})
                 return response
             # 其他情况只要OK就可以返回
