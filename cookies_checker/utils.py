@@ -95,15 +95,15 @@ async def refresh_cookies(is_forced=False, silent=False):
     # 保存并同步
     await sync_cookies(credential=credential)
 
-async def sync_cookies(credential:bili.Credential=bili.Credential()):
+async def sync_cookies(credential:bili.Credential|None=bili.Credential()):
     '保存cookies并同步到blrec'
     if not credential:
-        credential = load_credential()
+        credential, credential_dict = load_credential()
     else:
         if not credential.has_buvid3() or not credential.has_buvid4():
             credential.buvid3, credential.buvid4 = await get_buvid()
         dump_credential(credential)
-    credential_dict = credential.get_cookies()
+        credential_dict = credential.get_cookies()
     bili_tickets = await try_bili_ticket(credential)
     if bili_tickets:
         credential_dict.update(bili_tickets)

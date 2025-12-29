@@ -1,6 +1,6 @@
 import asyncio, traceback, json, os
 
-from aiohttp import ClientSession, ClientError, ClientTimeout
+from aiohttp import ClientSession, ClientError, ClientTimeout, client_exceptions
 from urllib.parse import quote
 
 from static import config, logger
@@ -9,9 +9,13 @@ async def send_request(timeout=20, **kwargs):
     '发送请求'
     async with ClientSession(timeout=ClientTimeout(total=timeout)) as session:
         async with session.request(**kwargs) as res:
-            response = await res.json()
+            try:
+                response = await res.json()
+            except client_exceptions.ContentTypeError:
+                # 返回内容不为JSON
+                logger.error(f"Blrec returned a text: \n{await res.text()}")
             if not res.ok:
-                logger.error(f"Sending to blrec error: \n{response}")
+                logger.error(f"Sending to blrec error: \n{await res.text()}")
                 return {}
             else:
                 return response
