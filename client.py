@@ -94,7 +94,7 @@ async def __handle_cookies(args):
     elif args.check:
         await refresh_cookies(args.forced)
     elif args.sync:
-        await sync_cookies()
+        await sync_cookies(credential=None)
 
 async def __handle_backup(args):
     config_file = args.config if args.config else "settings.toml"
